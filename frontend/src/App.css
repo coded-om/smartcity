@@ -1,0 +1,31 @@
+/* App shell — structural layout only; Tailwind handles component styling */
+
+/* Root layout */
+.app {
+  display: flex;
+  min-height: 100vh;
+  background: #0f1117;
+}
+
+/* On mobile the sidebar is a fixed overlay, main content fills full width */
+.main-content {
+  flex: 1;
+  min-width: 0;          /* prevent flex child overflow */
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: #0f1117;
+}
+
+/* Content scroll area */
+.content-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+@media (min-width: 640px) {
+  .content-area {
+    padding: 24px;
+  }
+}
