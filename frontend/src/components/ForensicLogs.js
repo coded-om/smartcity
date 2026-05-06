@@ -1,271 +1,258 @@
-import React, { useState } from 'react';
-import { FiFilter, FiDownload, FiCheckCircle, FiBell, FiVideo } from 'react-icons/fi';
-import { BsShieldExclamation } from 'react-icons/bs';
-import { FaFire } from 'react-icons/fa';
-import { pdf, Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import React, { useState, useMemo } from 'react';
 import {
-  FiWind, FiUser, FiAlertTriangle,
+  FiFilter, FiDownload, FiCheckCircle, FiBell, FiVideo,
+  FiSearch, FiChevronDown, FiChevronUp, FiTrash2,
 } from 'react-icons/fi';
-import { BsLightningFill } from 'react-icons/bs';
+import { apiFetch } from '../apiBase';
+import { cn, severityBg, alertTypeIcon, formatTimestamp, formatRelative } from '../lib/utils';
 
-const SEVERITY_COLOR = {
-  CRITICAL: '#ef4444',
-  HIGH:     '#f97316',
-  MEDIUM:   '#eab308',
-  LOW:      '#22c55e',
-};
+const SEVERITIES = ['all', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+const ALERT_TYPES = ['all', 'FIRE', 'GAS_LEAK', 'EXPLOSION', 'INTRUDER', 'ANOMALY'];
 
-const ALERT_ICON = {
-  FIRE:      FaFire,
-  GAS_LEAK:  FiWind,
-  EXPLOSION: BsLightningFill,
-  INTRUDER:  FiUser,
-  ANOMALY:   FiAlertTriangle,
-  NORMAL:    FiCheckCircle,
-};
-
-const SEVERITIES   = ['all', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
-const TABLE_HEADERS = ['ID', 'Type', 'Device', 'Severity', 'AI Score', 'Timestamp', 'Status'];
-
-// --- PDF document ------------------------------------------------------------
-
-const pdfStyles = StyleSheet.create({
-  page:  { padding: 30, backgroundColor: '#fff', fontFamily: 'Helvetica' },
-  title: { fontSize: 18, marginBottom: 16, fontWeight: 'bold', color: '#1e293b' },
-  sub:   { fontSize: 10, color: '#64748b', marginBottom: 20 },
-  head:  { flexDirection: 'row', borderBottom: '2pt solid #334155', paddingVertical: 8,
-           fontSize: 9, fontWeight: 'bold', color: '#334155' },
-  row:   { flexDirection: 'row', borderBottom: '1pt solid #e2e8f0', paddingVertical: 6, fontSize: 9 },
-  cell:  { flex: 1, paddingHorizontal: 4, color: '#334155' },
-});
-
-function AlertsPDF({ alerts }) {
-  return (
-    <Document>
-      <Page size="A4" style={pdfStyles.page}>
-        <Text style={pdfStyles.title}>Smart City Security — Forensic Alert Report</Text>
-        <Text style={pdfStyles.sub}>
-          Generated: {new Date().toLocaleString()} · Total: {alerts.length} alerts
-        </Text>
-        <View style={pdfStyles.head}>
-          {TABLE_HEADERS.map(h => (
-            <Text key={h} style={pdfStyles.cell}>{h}</Text>
-          ))}
-        </View>
-        {alerts.map(a => (
-          <View key={a.id} style={pdfStyles.row}>
-            <Text style={pdfStyles.cell}>#{a.id}</Text>
-            <Text style={pdfStyles.cell}>{a.alert_type}</Text>
-            <Text style={pdfStyles.cell}>{a.device_id}</Text>
-            <Text style={pdfStyles.cell}>{a.severity}</Text>
-            <Text style={pdfStyles.cell}>{a.ai_score?.toFixed(4) ?? 'N/A'}</Text>
-            <Text style={pdfStyles.cell}>{a.resolved ? 'Resolved' : 'Open'}</Text>
-            <Text style={pdfStyles.cell}>{a.timestamp}</Text>
-          </View>
-        ))}
-      </Page>
-    </Document>
-  );
-}
-
-async function exportPDF(alerts) {
-  const blob = await pdf(<AlertsPDF alerts={alerts} />).toBlob();
+function exportCSV(rows) {
+  const headers = ['ID', 'Device', 'Type', 'Severity', 'AI Score', 'Timestamp', 'Resolved'];
+  const lines = [
+    headers.join(','),
+    ...rows.map(a => [
+      a.id, a.device_id, a.alert_type, a.severity,
+      a.ai_score?.toFixed(4) || '', a.timestamp, a.resolved ? 'Yes' : 'No',
+    ].join(',')),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
   const url  = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.href     = url;
-  link.download = `forensic-report-${Date.now()}.pdf`;
-  link.click();
-  URL.revokeObjectURL(url);
+  link.href = url; link.download = `forensic_logs_${Date.now()}.csv`;
+  link.click(); URL.revokeObjectURL(url);
 }
 
-// --- Sub-components ----------------------------------------------------------
-
-function AlertTypeCell({ alertType }) {
-  const Icon = ALERT_ICON[alertType] || FiAlertTriangle;
+function AlertRow({ alert, selected, onSelect, onResolve }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <span className="flex items-center gap-2 font-semibold text-white">
-      <Icon className="shrink-0" />
-      {alertType}
-    </span>
-  );
-}
-
-function StatusCell({ resolved, videoFile, videoUrl, onOpenVideo }) {
-  return (
-    <span className="flex items-center gap-2">
-      {resolved
-        ? <span className="flex items-center gap-1 text-emerald-400"><FiCheckCircle /> Resolved</span>
-        : <span className="flex items-center gap-1 text-orange-400"><FiBell /> Open</span>
-      }
-      {videoFile && (
-        <button
-          onClick={onOpenVideo}
-          className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
-          title="Play recording"
-        >
-          <FiVideo /> View
-        </button>
+    <>
+      <tr
+        className={cn(
+          'border-b border-surface-600 hover:bg-surface-700 transition-colors cursor-pointer',
+          selected && 'bg-primary-500/10',
+        )}
+        onClick={() => setExpanded(e => !e)}
+      >
+        <td className="px-4 py-3 w-10">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={e => { e.stopPropagation(); onSelect(); }}
+            className="w-4 h-4 accent-primary-500"
+            onClick={e => e.stopPropagation()}
+          />
+        </td>
+        <td className="px-4 py-3 text-slate-400 text-sm font-mono">#{alert.id}</td>
+        <td className="px-4 py-3">
+          <span className="flex items-center gap-2 text-sm">
+            <span className="text-base">{alertTypeIcon(alert.alert_type)}</span>
+            <span className="text-white font-medium">{alert.alert_type}</span>
+          </span>
+        </td>
+        <td className="px-4 py-3 text-slate-300 text-sm">{alert.device_id}</td>
+        <td className="px-4 py-3">
+          <span className={cn('text-xs font-bold px-2 py-1 rounded-full border', severityBg(alert.severity))}>
+            {alert.severity}
+          </span>
+        </td>
+        <td className="px-4 py-3 text-slate-400 text-xs font-mono">
+          {alert.ai_score != null ? alert.ai_score.toFixed(4) : '—'}
+        </td>
+        <td className="px-4 py-3 text-slate-400 text-xs">
+          <span title={formatTimestamp(alert.timestamp)}>{formatRelative(alert.timestamp)}</span>
+        </td>
+        <td className="px-4 py-3">
+          {alert.resolved
+            ? <span className="flex items-center gap-1 text-xs text-emerald-400"><FiCheckCircle /> Resolved</span>
+            : <button
+                onClick={e => { e.stopPropagation(); onResolve(alert.id); }}
+                className="text-xs text-primary-400 hover:text-primary-300 border border-primary-500/30 rounded px-2 py-0.5 transition-colors"
+              >Resolve</button>
+          }
+        </td>
+        <td className="px-4 py-3 text-slate-500 text-sm">
+          {expanded ? <FiChevronUp /> : <FiChevronDown />}
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="bg-surface-800">
+          <td colSpan={9} className="px-6 py-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+              <div><p className="text-slate-500">Alert ID</p><p className="text-white font-mono">#{alert.id}</p></div>
+              <div><p className="text-slate-500">Device</p><p className="text-white">{alert.device_id}</p></div>
+              <div><p className="text-slate-500">Timestamp</p><p className="text-white">{formatTimestamp(alert.timestamp)}</p></div>
+              <div><p className="text-slate-500">AI Score</p><p className="text-white font-mono">{alert.ai_score?.toFixed(6) ?? '—'}</p></div>
+              {alert.video_url && (
+                <div className="col-span-4">
+                  <p className="text-slate-500 mb-1">Video Evidence</p>
+                  <video src={alert.video_url} controls className="rounded-lg max-h-40 bg-black" />
+                </div>
+              )}
+              {alert.notes && (
+                <div className="col-span-4"><p className="text-slate-500">Notes</p><p className="text-white">{alert.notes}</p></div>
+              )}
+            </div>
+          </td>
+        </tr>
       )}
-      {!videoFile && videoUrl && (
-        <button
-          onClick={onOpenVideo}
-          className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
-          title="Play recording"
-        >
-          <FiVideo /> View
-        </button>
-      )}
-    </span>
+    </>
   );
 }
 
 // --- Main component ----------------------------------------------------------
 
-function ForensicLogs({ alerts }) {
-  const [filter, setFilter] = useState('all');
-  const [selectedVideo, setSelectedVideo] = useState(null);
+function ForensicLogs({ alerts: propAlerts }) {
+  const [severityFilter, setSeverityFilter] = useState('all');
+  const [typeFilter,     setTypeFilter]     = useState('all');
+  const [search,         setSearch]         = useState('');
+  const [dateFrom,       setDateFrom]       = useState('');
+  const [dateTo,         setDateTo]         = useState('');
+  const [selected,       setSelected]       = useState(new Set());
+  const [resolving,      setResolving]      = useState(new Set());
+  const [localAlerts,    setLocalAlerts]    = useState(null);
 
-  const videoSrcFor = (alert) => {
-    if (alert.video_url) {
-      if (alert.video_url.startsWith('http://') || alert.video_url.startsWith('https://')) {
-        return alert.video_url;
+  const alerts = localAlerts ?? propAlerts ?? [];
+
+  const filtered = useMemo(() => {
+    return alerts.filter(a => {
+      if (severityFilter !== 'all' && a.severity !== severityFilter) return false;
+      if (typeFilter !== 'all' && a.alert_type !== typeFilter) return false;
+      if (dateFrom && a.timestamp < dateFrom) return false;
+      if (dateTo   && a.timestamp > dateTo + 'T23:59:59') return false;
+      if (search) {
+        const q = search.toLowerCase();
+        if (!a.device_id?.toLowerCase().includes(q) &&
+            !a.alert_type?.toLowerCase().includes(q)) return false;
       }
-      return `http://${window.location.hostname}:5000${alert.video_url}`;
-    }
+      return true;
+    });
+  }, [alerts, severityFilter, typeFilter, search, dateFrom, dateTo]);
 
-    // Backward compatibility for old alerts that only have file path
-    if (alert.video_file) {
-      const filename = alert.video_file.split('/').pop();
-      return `http://${window.location.hostname}:5000/api/recordings/${filename}`;
-    }
+  const allSelected = filtered.length > 0 && filtered.every(a => selected.has(a.id));
 
-    return null;
+  const toggleAll = () => {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(filtered.map(a => a.id)));
   };
 
-  const filtered = filter === 'all'
-    ? (alerts || [])
-    : (alerts || []).filter(a => a.severity === filter);
+  const toggleOne = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const resolveAlert = async (id) => {
+    setResolving(r => new Set(r).add(id));
+    try {
+      await apiFetch(`/alerts/${id}/resolve`, { method: 'PATCH' });
+      setLocalAlerts(prev => (prev ?? alerts).map(a => a.id === id ? { ...a, resolved: 1 } : a));
+    } catch {}
+    setResolving(r => { const n = new Set(r); n.delete(id); return n; });
+  };
+
+  const resolveSelected = async () => {
+    for (const id of selected) await resolveAlert(id);
+    setSelected(new Set());
+  };
 
   return (
-    <div className="space-y-5">
-
+    <div className="space-y-4 animate-fade-in">
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-[#1e2535] border border-[#252d3d] rounded-2xl px-5 py-4">
-        <div className="flex items-center gap-2 flex-wrap">
-          <FiFilter className="text-slate-500 shrink-0" />
-          <span className="text-slate-500 text-xs font-semibold uppercase">Filter:</span>
-          {SEVERITIES.map(s => (
-            <button
-              key={s}
-              onClick={() => setFilter(s)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                filter === s
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-[#161b27] text-slate-400 hover:text-white border border-[#252d3d]'
-              }`}
-            >
-              {s.toUpperCase()}
-            </button>
-          ))}
+      <div className="bg-surface-600 border border-surface-500 rounded-2xl p-4 space-y-3">
+        {/* Search + filters row */}
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="relative flex-1 min-w-48">
+            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm pointer-events-none" />
+            <input
+              value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search device or type…"
+              className="w-full bg-surface-700 border border-surface-500 rounded-xl pl-9 pr-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-primary-500 transition-colors placeholder:text-slate-600"
+            />
+          </div>
+          <select
+            value={severityFilter} onChange={e => setSeverityFilter(e.target.value)}
+            className="bg-surface-700 border border-surface-500 rounded-xl px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-primary-500"
+          >
+            {SEVERITIES.map(s => <option key={s} value={s}>{s === 'all' ? 'All Severities' : s}</option>)}
+          </select>
+          <select
+            value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
+            className="bg-surface-700 border border-surface-500 rounded-xl px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-primary-500"
+          >
+            {ALERT_TYPES.map(t => <option key={t} value={t}>{t === 'all' ? 'All Types' : t}</option>)}
+          </select>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="bg-surface-700 border border-surface-500 rounded-xl px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-primary-500"
+          />
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="bg-surface-700 border border-surface-500 rounded-xl px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-primary-500"
+          />
         </div>
-        <button
-          onClick={() => exportPDF(filtered)}
-          className="flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
-        >
-          <FiDownload /> Export PDF ({filtered.length})
-        </button>
+
+        {/* Action row */}
+        <div className="flex flex-wrap gap-2 items-center justify-between">
+          <p className="text-slate-500 text-sm">{filtered.length} results</p>
+          <div className="flex gap-2">
+            {selected.size > 0 && (
+              <button
+                onClick={resolveSelected}
+                className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+              >
+                <FiCheckCircle /> Resolve {selected.size} selected
+              </button>
+            )}
+            <button
+              onClick={() => exportCSV(filtered)}
+              className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-300 hover:bg-primary-500/20 transition-colors"
+            >
+              <FiDownload /> Export CSV
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Table */}
-      <div className="bg-[#1e2535] border border-[#252d3d] rounded-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#252d3d]">
-          <h3 className="text-white font-semibold">Alert History</h3>
-          <span className="text-xs bg-blue-500/20 text-blue-400 rounded-full px-3 py-1">
-            {filtered.length} Records
-          </span>
-        </div>
-
-        {filtered.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#252d3d] text-slate-500 text-xs uppercase tracking-wide">
-                  {TABLE_HEADERS.map(h => (
-                    <th key={h} className="px-5 py-3 text-left font-semibold">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(alert => (
-                  <tr
-                    key={alert.id}
-                    className="border-b border-[#252d3d] hover:bg-[#161b27] transition-colors"
-                  >
-                    <td className="px-5 py-3 text-slate-500 font-mono text-xs">#{alert.id}</td>
-                    <td className="px-5 py-3">
-                      <AlertTypeCell alertType={alert.alert_type} />
-                    </td>
-                    <td className="px-5 py-3 text-slate-400 font-mono text-xs">{alert.device_id}</td>
-                    <td className="px-5 py-3">
-                      <span
-                        className="text-xs font-bold px-2.5 py-1 rounded-full text-white"
-                        style={{ background: SEVERITY_COLOR[alert.severity] || '#6b7280' }}
-                      >
-                        {alert.severity}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-purple-400 font-mono text-xs">
-                      {alert.ai_score?.toFixed(4) ?? 'N/A'}
-                    </td>
-                    <td className="px-5 py-3 text-slate-400 text-xs">
-                      {new Date(alert.timestamp).toLocaleString()}
-                    </td>
-                    <td className="px-5 py-3 text-xs">
-                      <StatusCell
-                        resolved={alert.resolved}
-                        videoFile={alert.video_file}
-                        videoUrl={alert.video_url}
-                        onOpenVideo={() => setSelectedVideo(videoSrcFor(alert))}
-                      />
-                    </td>
-                  </tr>
+      <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-surface-500 bg-surface-800">
+                <th className="px-4 py-3 w-10">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll}
+                    className="w-4 h-4 accent-primary-500" />
+                </th>
+                {['#', 'Type', 'Device', 'Severity', 'AI Score', 'Time', 'Status', ''].map(h => (
+                  <th key={h} className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-16 text-slate-500 gap-3">
-            <BsShieldExclamation className="text-5xl" />
-            <p className="font-semibold">No Alerts Found</p>
-            <p className="text-xs">No alerts match the selected filter</p>
-          </div>
-        )}
-      </div>
-
-      {selectedVideo && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="w-full max-w-4xl bg-[#1e2535] border border-[#252d3d] rounded-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[#252d3d]">
-              <h4 className="text-white font-semibold">Alert Recording</h4>
-              <button
-                onClick={() => setSelectedVideo(null)}
-                className="text-slate-400 hover:text-white text-sm"
-              >
-                Close
-              </button>
-            </div>
-            <div className="p-4">
-              <video
-                src={selectedVideo}
-                controls
-                autoPlay
-                className="w-full rounded-lg bg-black"
-              />
-            </div>
-          </div>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(a => (
+                <AlertRow
+                  key={a.id}
+                  alert={a}
+                  selected={selected.has(a.id)}
+                  onSelect={() => toggleOne(a.id)}
+                  onResolve={resolveAlert}
+                />
+              ))}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="text-center py-16 text-slate-500">
+                    <FiCheckCircle className="text-4xl mx-auto mb-3 text-slate-600" />
+                    <p>No alerts match your filters</p>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-      )}
-
+      </div>
     </div>
   );
 }

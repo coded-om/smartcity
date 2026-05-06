@@ -5,15 +5,19 @@ import Sidebar      from './components/Sidebar';
 import Header       from './components/Header';
 import Overview     from './components/Overview';
 import LiveMonitor  from './components/LiveMonitor';
+import Cameras      from './components/Cameras';
 import ForensicLogs from './components/ForensicLogs';
 import AIAnalysis   from './components/AIAnalysis';
+import SecurityMap  from './components/SecurityMap';
+import ReportCenter from './components/ReportCenter';
+import Settings     from './components/Settings';
+import { apiFetch } from './apiBase';
 import './App.css';
 
-const API_URL = `http://${window.location.hostname}:5000/api`;
 const POLL_MS = 3000;
 
-function fetchWithSignal(url, signal) {
-  return fetch(url, { signal });
+function fetchWithSignal(path, signal) {
+  return apiFetch(path, { signal });
 }
 
 function App() {
@@ -35,10 +39,10 @@ function App() {
 
       try {
         const [sRes, dRes, aRes, mRes] = await Promise.all([
-          fetchWithSignal(`${API_URL}/stats`,            signal),
-          fetchWithSignal(`${API_URL}/devices`,          signal),
-          fetchWithSignal(`${API_URL}/alerts?limit=50`,  signal),
-          fetchWithSignal(`${API_URL}/models`,           signal),
+          fetchWithSignal('/stats',           signal),
+          fetchWithSignal('/devices',         signal),
+          fetchWithSignal('/alerts?limit=50', signal),
+          fetchWithSignal('/models',          signal),
         ]);
         const [sData, dData, aData, mData] = await Promise.all([
           sRes.json(), dRes.json(), aRes.json(), mRes.json(),
@@ -80,8 +84,12 @@ function App() {
     switch (activeView) {
       case 'overview':      return <Overview stats={stats} devices={devices} alerts={alerts} models={models} />;
       case 'live-monitor':  return <LiveMonitor devices={devices} />;
+      case 'cameras':       return <Cameras />;
       case 'forensic-logs': return <ForensicLogs alerts={alerts} />;
       case 'ai-analysis':   return <AIAnalysis devices={devices} models={models} alerts={alerts} />;
+      case 'security-map':  return <SecurityMap devices={devices} alerts={alerts} />;
+      case 'report-center': return <ReportCenter devices={devices} alerts={alerts} stats={stats} models={models} />;
+      case 'settings':      return <Settings />;
       default:              return <Overview stats={stats} devices={devices} alerts={alerts} models={models} />;
     }
   };
@@ -109,6 +117,7 @@ function App() {
         <Header
           activeView={activeView}
           stats={stats}
+          alerts={alerts}
           onMenuClick={() => setSidebarOpen(prev => !prev)}
         />
         <div className="content-area">

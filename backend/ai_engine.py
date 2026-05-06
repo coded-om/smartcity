@@ -1,22 +1,14 @@
 """
-AI Engine - Isolation Forest Anomaly Detection
-================================================
+AI Engine - Isolation Forest + Rule-Based Anomaly Detection
+============================================================
 
-This module provides anomaly detection for IoT sensor data using
-scikit-learn's Isolation Forest algorithm.
+Two-layer detection:
+  Layer 1 – Rule-based: Immediate classification based on configured thresholds.
+             Fires even before a model is trained.
+  Layer 2 – Isolation Forest: Statistical anomaly scoring per device.
 
-Key Features:
-- One model per device (independent baselines)
-- Trains on normal readings only
-- Fast inference (< 1 ms per prediction)
-- Offline operation (no internet required)
-- Automatic alert classification
-
-Model Lifecycle:
-1. Collection Phase (0-24h): Gather normal readings
-2. Training: Build Isolation Forest on historical data
-3. Production: Score every new reading in real-time
-4. Retraining: Monthly updates to adapt to environmental changes
+Alert priority:
+  FIRE > GAS_LEAK > EXPLOSION > INTRUDER > ANOMALY > NORMAL
 """
 
 from sklearn.ensemble import IsolationForest
@@ -26,283 +18,303 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 
-# Configuration
+# ── Paths ────────────────────────────────────────────────────────────────────
 MODELS_DIR = Path(__file__).parent / 'models'
 MODELS_DIR.mkdir(exist_ok=True)
-
 DB_PATH = Path(__file__).parent / 'sensors.db'
 
-# Model cache to avoid reloading from disk
+# ── In-memory model cache ─────────────────────────────────────────────────────
 _model_cache = {}
 
-# Anomaly detection parameters
-CONTAMINATION = 0.05  # Expect 5% of data to be anomalies
-N_ESTIMATORS = 100    # Number of trees in forest
-MIN_SAMPLES = 100     # Minimum readings needed to train
+# ── Isolation Forest params ───────────────────────────────────────────────────
+CONTAMINATION = 0.05
+N_ESTIMATORS  = 100
+MIN_SAMPLES   = 100
+
+# ── Rule-based thresholds ─────────────────────────────────────────────────────
+RULES = {
+    'temp_fire':     55,    # °C
+    'temp_high':     35,    # °C
+    'humid_high':    70,    # %
+    'gas_critical':  3000,  # ADC
+    'gas_high':      2100,  # ADC
+    'mic_explosion': 3500,  # ADC
+}
 
 
 def train_model(device_id: str) -> dict:
-    """
-    Train Isolation Forest model on historical normal readings.
-    
-    Args:
-        device_id: Device identifier (e.g., "ESP32_Factory01")
-    
-    Returns:
-        dict: Training statistics
-            - readings_used (int): Number of readings used
-            - features (list): Feature names
-            - model_path (str): Path to saved model
-            - trained_at (str): Timestamp
-    
-    Raises:
-        ValueError: If insufficient data available
-    
-    Example:
-        >>> stats = train_model("ESP32_Factory01")
-        >>> print(f"Trained on {stats['readings_used']} readings")
-    """
+    """Train Isolation Forest on historical normal readings for one device."""
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
-    
-    # Fetch normal readings (exclude anomalies for training)
-    # TRAINING and NORMAL are both considered baseline readings
-    # Limit to last 43,200 readings (~24 hours at 2s interval)
     rows = conn.execute(
-        """SELECT temperature, humidity, gas, mic 
+        """SELECT temperature, humidity, gas, mic
            FROM readings
-           WHERE device_id = ? 
+           WHERE device_id = ?
              AND alert_type IN ('NORMAL', 'TRAINING')
-           ORDER BY id DESC 
-           LIMIT 43200""",
+           ORDER BY id DESC LIMIT 43200""",
         (device_id,)
     ).fetchall()
-    
     conn.close()
-    
-    # Validate sufficient data
+
     if len(rows) < MIN_SAMPLES:
         raise ValueError(
-            f"Insufficient data for {device_id}: "
-            f"Found {len(rows)} readings, need at least {MIN_SAMPLES}"
+            f"Not enough data for {device_id}: {len(rows)} readings (need {MIN_SAMPLES})"
         )
-    
-    # Convert to numpy array
+
     X = np.array(rows, dtype=float)
-    
-    # Train Isolation Forest
     model = IsolationForest(
         n_estimators=N_ESTIMATORS,
         contamination=CONTAMINATION,
         max_samples='auto',
         random_state=42,
-        n_jobs=-1  # Use all CPU cores
+        n_jobs=-1,
     )
-    
-    print(f"🔧 Training model for {device_id} on {len(rows)} readings...")
+    print(f"🔧 Training model for {device_id} on {len(rows)} readings…")
     model.fit(X)
-    
-    # Save model to disk
+
     model_path = MODELS_DIR / f"model_{device_id}.pkl"
     joblib.dump(model, model_path)
-    
-    # Cache in memory
     _model_cache[device_id] = model
-    
-    # Update device status in database
+
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
     conn.execute(
-        """UPDATE devices 
-           SET model_path = ?, 
-               trained_at = ?,
-               status = 'active'
-           WHERE device_id = ?""",
-        (str(model_path), datetime.now(), device_id)
+        "UPDATE devices SET model_path=?, trained_at=?, status='active' WHERE device_id=?",
+        (str(model_path), datetime.now().strftime('%Y-%m-%d %H:%M:%S'), device_id),
     )
     conn.commit()
     conn.close()
-    
-    print(f"✅ Model trained and saved: {model_path}")
-    
+    print(f"✅ Model saved: {model_path}")
     return {
         'readings_used': len(rows),
-        'features': ['temperature', 'humidity', 'gas', 'mic'],
-        'model_path': str(model_path),
-        'trained_at': datetime.now().isoformat(),
+        'features':      ['temperature', 'humidity', 'gas', 'mic'],
+        'model_path':    str(model_path),
+        'trained_at':    datetime.now().isoformat(),
         'contamination': CONTAMINATION,
-        'n_estimators': N_ESTIMATORS
+        'n_estimators':  N_ESTIMATORS,
     }
 
+
+def auto_train_if_ready(device_id: str) -> bool:
+    """Train automatically if >= MIN_SAMPLES exist but no model yet."""
+    model_path = MODELS_DIR / f"model_{device_id}.pkl"
+    if model_path.exists():
+        return False
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+    count = conn.execute(
+        "SELECT COUNT(*) FROM readings WHERE device_id=? AND alert_type IN ('NORMAL','TRAINING')",
+        (device_id,),
+    ).fetchone()[0]
+    conn.close()
+    if count >= MIN_SAMPLES:
+        try:
+            train_model(device_id)
+            return True
+        except Exception as e:
+            print(f"⚠️  Auto-train failed for {device_id}: {e}")
+    return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prediction
+# ─────────────────────────────────────────────────────────────────────────────
 
 def predict(device_id: str, reading: dict) -> dict:
-    """
-    Score a sensor reading for anomalies.
-    
-    Args:
-        device_id: Device identifier
-        reading: Dict with keys: temperature, humidity, gas, mic
-    
-    Returns:
-        dict: Prediction results
-            - anomaly (bool): True if anomalous
-            - score (float): Anomaly score (-1.0 to +1.0)
-                +1.0 = very normal
-                 0.0 = edge case
-                -1.0 = very anomalous
-            - type (str): Alert classification
-    
-    Raises:
-        FileNotFoundError: If model not trained yet
-    
-    Example:
-        >>> result = predict("ESP32_Factory01", {
-        ...     "temperature": 55, "humidity": 60,
-        ...     "gas": 3200, "mic": 800
-        ... })
-        >>> if result['anomaly']:
-        ...     print(f"ALERT: {result['type']} (score: {result['score']})")
-    """
-    # Load model from cache or disk
+    """Score a sensor reading; returns anomaly flag, score, and alert type."""
+    # Layer 1: rule-based (works without a trained model)
+    rule_type = _rule_classify(reading)
+    if rule_type not in ('NORMAL', 'ANOMALY'):
+        return {'anomaly': True, 'score': -1.0, 'type': rule_type, 'source': 'rule'}
+
+    # Layer 2: Isolation Forest
     if device_id not in _model_cache:
         model_path = MODELS_DIR / f"model_{device_id}.pkl"
-        
         if not model_path.exists():
-            raise FileNotFoundError(
-                f"Model not found for {device_id}. "
-                f"Train first using POST /api/train/{device_id}"
-            )
-        
+            raise FileNotFoundError(f"No model for {device_id}")
         _model_cache[device_id] = joblib.load(model_path)
-    
-    model = _model_cache[device_id]
-    
-    # Prepare input features (must match training order)
-    X = [[
-        reading.get('temperature', 0),
-        reading.get('humidity', 0),
-        reading.get('gas', 0),
-        reading.get('mic', 0)
-    ]]
-    
-    # Get anomaly score
-    # Higher scores = more normal
-    # Lower scores = more anomalous
-    score = model.decision_function(X)[0]
-    
-    # Get binary prediction (-1 = anomaly, 1 = normal)
-    prediction = model.predict(X)[0]
-    is_anomaly = (prediction == -1)
-    
-    # Classify alert type based on sensor values and anomaly status
-    alert_type = _classify(reading, is_anomaly)
-    
-    return {
-        'anomaly': bool(is_anomaly),
-        'score': round(float(score), 4),
-        'type': alert_type,
-    }
+
+    model      = _model_cache[device_id]
+    X          = [[reading.get('temperature', 0), reading.get('humidity', 0),
+                   reading.get('gas', 0),          reading.get('mic', 0)]]
+    score      = float(model.decision_function(X)[0])
+    is_anomaly = model.predict(X)[0] == -1
+    alert_type = _full_classify(reading, is_anomaly)
+    return {'anomaly': bool(is_anomaly), 'score': round(score, 4), 'type': alert_type, 'source': 'ml'}
 
 
-def _classify(reading: dict, is_anomaly: bool) -> str:
-    """
-    Classify alert type based on sensor readings and anomaly status.
-    
-    Priority order:
-    1. Critical thresholds (FIRE, GAS_LEAK, EXPLOSION)
-    2. Motion detection (INTRUDER)
-    3. AI anomaly (ANOMALY)
-    4. Normal (NORMAL)
-    
-    Args:
-        reading: Sensor values dict
-        is_anomaly: Whether AI detected anomaly
-    
-    Returns:
-        str: Alert type classification
-    """
-    temp = reading.get('temperature', 0)
-    gas = reading.get('gas', 0)
-    mic = reading.get('mic', 0)
-    motion = reading.get('motion', 0)
-    
-    # Critical threshold checks (highest priority)
-    if temp > 55:
-        return 'FIRE'
-    
-    if gas > 3000:
-        return 'GAS_LEAK'
-    
-    if mic > 3500:
-        return 'EXPLOSION'
-    
-    # Motion detection
-    if motion == 1:
-        return 'INTRUDER'
-    
-    # AI-detected anomaly (no specific threshold crossed)
-    if is_anomaly:
-        return 'ANOMALY'
-    
-    # All good
+def _rule_classify(reading: dict) -> str:
+    temp   = reading.get('temperature', 0) or 0
+    gas    = reading.get('gas', 0)          or 0
+    mic    = reading.get('mic', 0)          or 0
+    motion = reading.get('motion', 0)       or 0
+    if temp   > RULES['temp_fire']:     return 'FIRE'
+    if gas    > RULES['gas_critical']:  return 'GAS_LEAK'
+    if mic    > RULES['mic_explosion']: return 'EXPLOSION'
+    if motion == 1:                     return 'INTRUDER'
+    if gas    > RULES['gas_high']:      return 'ANOMALY'
+    if temp   > RULES['temp_high']:     return 'ANOMALY'
+    if (reading.get('humidity', 0) or 0) > RULES['humid_high']: return 'ANOMALY'
     return 'NORMAL'
 
 
+def _full_classify(reading: dict, is_anomaly: bool) -> str:
+    rule = _rule_classify(reading)
+    if rule not in ('NORMAL', 'ANOMALY'):
+        return rule
+    return 'ANOMALY' if is_anomaly else 'NORMAL'
+
+
 def get_severity(alert_type: str, score: float) -> str:
-    """
-    Determine alert severity level.
-    
-    Args:
-        alert_type: Classification (FIRE, GAS_LEAK, etc.)
-        score: AI anomaly score (-1.0 to +1.0)
-    
-    Returns:
-        str: CRITICAL, HIGH, MEDIUM, or LOW
-    """
-    # Critical alerts always highest severity
-    if alert_type in ('FIRE', 'EXPLOSION'):
-        return 'CRITICAL'
-    
-    if alert_type == 'GAS_LEAK':
-        return 'CRITICAL'
-    
-    if alert_type == 'INTRUDER':
-        return 'HIGH'
-    
-    # For generic anomalies, use score
+    if alert_type in ('FIRE', 'EXPLOSION', 'GAS_LEAK'): return 'CRITICAL'
+    if alert_type == 'INTRUDER':                         return 'HIGH'
     if alert_type == 'ANOMALY':
-        if score < -0.7:
-            return 'HIGH'
-        elif score < -0.4:
-            return 'MEDIUM'
-        else:
-            return 'LOW'
-    
+        if score < -0.7:   return 'HIGH'
+        elif score < -0.4: return 'MEDIUM'
+        else:              return 'LOW'
     return 'LOW'
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Security Event Analytics
+# ─────────────────────────────────────────────────────────────────────────────
+
+def analyze_security_events(device_id: str = None) -> dict:
+    """Return aggregated security analytics for the dashboard."""
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    dev_filter  = "AND a.device_id = ?" if device_id else ""
+    dev_params  = (device_id,) if device_id else ()
+    dev_filter2 = "WHERE a.device_id = ?" if device_id else "WHERE 1=1"
+
+    # Alert type distribution
+    type_rows = conn.execute(
+        f"SELECT alert_type, COUNT(*) cnt FROM alerts a {dev_filter2} {'AND' if device_id else 'AND'} 1=1 "
+        f"GROUP BY alert_type ORDER BY cnt DESC",
+        dev_params,
+    ).fetchall()
+    alert_type_counts = {r['alert_type']: r['cnt'] for r in type_rows}
+
+    # Severity distribution
+    sev_rows = conn.execute(
+        f"SELECT severity, COUNT(*) cnt FROM alerts a {dev_filter2} GROUP BY severity ORDER BY cnt DESC",
+        dev_params,
+    ).fetchall()
+    severity_counts = {r['severity']: r['cnt'] for r in sev_rows}
+
+    # Hourly heatmap (last 7 days)
+    heatmap_rows = conn.execute(
+        f"""SELECT CAST(strftime('%H', a.timestamp) AS INTEGER) hour, COUNT(*) cnt
+            FROM alerts a {dev_filter2}
+              AND a.timestamp >= datetime('now', '-7 days')
+            GROUP BY hour ORDER BY hour""",
+        dev_params,
+    ).fetchall()
+    hourly_heatmap = [{'hour': r['hour'], 'count': r['cnt']} for r in heatmap_rows]
+
+    # 24h trend
+    last24 = conn.execute(
+        f"SELECT COUNT(*) FROM alerts a {dev_filter2} AND a.timestamp >= datetime('now','-24 hours')",
+        dev_params,
+    ).fetchone()[0]
+    prev24 = conn.execute(
+        f"""SELECT COUNT(*) FROM alerts a {dev_filter2}
+              AND a.timestamp BETWEEN datetime('now','-48 hours') AND datetime('now','-24 hours')""",
+        dev_params,
+    ).fetchone()[0]
+    trend_pct = round(((last24 - prev24) / prev24) * 100, 1) if prev24 > 0 else (100.0 if last24 > 0 else 0)
+
+    # Per-device risk scores (last 24h)
+    device_rows = conn.execute(
+        """SELECT device_id,
+                  SUM(CASE severity WHEN 'CRITICAL' THEN 4 WHEN 'HIGH' THEN 3
+                                    WHEN 'MEDIUM'   THEN 2 ELSE 1 END) weighted,
+                  COUNT(*) total
+           FROM alerts WHERE timestamp >= datetime('now','-24 hours')
+           GROUP BY device_id""",
+    ).fetchall()
+    risk_scores = {
+        r['device_id']: {'score': min(100, round((r['weighted'] / 80) * 100)), 'total_alerts': r['total']}
+        for r in device_rows
+    }
+
+    # Top devices by alert count
+    top_rows = conn.execute(
+        "SELECT device_id, COUNT(*) cnt FROM alerts GROUP BY device_id ORDER BY cnt DESC LIMIT 10",
+    ).fetchall()
+    top_devices = [{'device_id': r['device_id'], 'alert_count': r['cnt']} for r in top_rows]
+
+    # Recent event clusters
+    cluster_rows = conn.execute(
+        """SELECT timestamp, alert_type, device_id, severity FROM alerts
+           WHERE timestamp >= datetime('now','-24 hours')
+           ORDER BY timestamp DESC LIMIT 200""",
+    ).fetchall()
+    clusters = _cluster_events([dict(r) for r in cluster_rows])
+
+    conn.close()
+    return {
+        'alert_type_counts': alert_type_counts,
+        'severity_counts':   severity_counts,
+        'hourly_heatmap':    hourly_heatmap,
+        'trend_24h':         {'last_24h': last24, 'prev_24h': prev24, 'change_pct': trend_pct},
+        'risk_scores':       risk_scores,
+        'top_devices':       top_devices,
+        'recent_clusters':   clusters[:10],
+    }
+
+
+def _cluster_events(events: list, window_minutes: int = 5) -> list:
+    if not events:
+        return []
+    clusters, current = [], [events[0]]
+    for ev in events[1:]:
+        try:
+            t_prev = datetime.fromisoformat(current[-1]['timestamp'])
+            t_curr = datetime.fromisoformat(ev['timestamp'])
+            if abs((t_prev - t_curr).total_seconds()) <= window_minutes * 60:
+                current.append(ev)
+            else:
+                clusters.append(current); current = [ev]
+        except Exception:
+            current.append(ev)
+    clusters.append(current)
+    order = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
+    return [
+        {
+            'event_count':  len(c),
+            'start':        c[-1]['timestamp'],
+            'end':          c[0]['timestamp'],
+            'types':        list({e['alert_type'] for e in c}),
+            'devices':      list({e['device_id'] for e in c}),
+            'max_severity': next((s for s in order if s in {e['severity'] for e in c}), 'LOW'),
+        }
+        for c in clusters
+    ]
+
+
+def get_sensor_trends(device_id: str, hours: int = 24) -> list:
+    """Return time-series sensor data for charts."""
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT timestamp, temperature, humidity, gas, mic, motion, ai_score, alert_type
+           FROM readings
+           WHERE device_id = ? AND timestamp >= datetime('now', ? || ' hours')
+           ORDER BY timestamp ASC LIMIT 500""",
+        (device_id, f'-{hours}'),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Utilities
+# ─────────────────────────────────────────────────────────────────────────────
+
 def clear_model_cache():
-    """Clear all cached models (useful for testing or updates)"""
     global _model_cache
     _model_cache.clear()
     print("🗑️  Model cache cleared")
 
 
 def list_trained_models() -> list:
-    """
-    List all trained models.
-    
-    Returns:
-        list: Device IDs with trained models
-    """
-    models = list(MODELS_DIR.glob("model_*.pkl"))
-    device_ids = [m.stem.replace("model_", "") for m in models]
-    return device_ids
-
-
-if __name__ == '__main__':
-    # Test/debug code
-    print("🧪 AI Engine Test")
-    print("=" * 50)
-    print(f"Models directory: {MODELS_DIR}")
-    print(f"Database: {DB_PATH}")
-    print(f"Trained models: {list_trained_models()}")
-    print("=" * 50)
+    return [m.stem.replace('model_', '') for m in MODELS_DIR.glob('model_*.pkl')]

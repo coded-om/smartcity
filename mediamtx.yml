@@ -1,0 +1,57 @@
+###############################################################################
+# MediaMTX config — Smart City camera stream server
+# Camera RTSP → HLS (port 8888) for browser playback via hls.js
+###############################################################################
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logLevel: info
+logDestinations: [stdout]
+
+# ── API (for health checks) ───────────────────────────────────────────────────
+api: yes
+apiAddress: 127.0.0.1:9997
+
+# ── Protocols — only what we need ────────────────────────────────────────────
+# Re-publish RTSP internally so recorder.py can still connect if needed
+rtsp: yes
+rtspAddress: :8554
+rtspsAddress: :8322
+
+# Disable unused protocols to save resources
+rtmp: no
+srt: no
+webrtc: no
+
+# ── HLS — browser playback ───────────────────────────────────────────────────
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigins: ["*"]
+hlsAlwaysRemux: yes      # keep HLS playlist alive even between recordings
+hlsVariant: lowLatency   # LL-HLS for ~0.5s latency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+
+# ── Camera paths ─────────────────────────────────────────────────────────────
+paths:
+  # Internal path — pulls H265 directly from camera
+  factory01_raw:
+    source: rtsp://admin:TCXYKV@192.168.1.33:554/h264_stream
+    rtspTransport: tcp
+    rtspAnyPort: yes
+    sourceOnDemand: no
+    overridePublisher: yes
+    # When stream is ready, transcode H265 → H264 and publish to factory01
+    runOnReady: >-
+      ffmpeg
+      -rtsp_transport tcp
+      -i rtsp://localhost:8554/factory01_raw
+      -c:v libx264 -preset ultrafast -tune zerolatency
+      -b:v 1500k -maxrate 2000k -bufsize 4000k
+      -c:a aac -b:a 128k
+      -f rtsp rtsp://localhost:8554/factory01
+    runOnReadyRestart: yes
+
+  # Browser-facing path — receives H264 from ffmpeg above
+  factory01:
+    overridePublisher: yes

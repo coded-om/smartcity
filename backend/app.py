@@ -10,11 +10,23 @@ import ai_engine
 import notifier
 import recorder
 
+# Try to import face_recognition_engine - optional feature
+try:
+    import face_recognition_engine as fre
+    FACE_RECOGNITION_ENABLED = True
+except Exception as e:
+    print(f"⚠️  Face recognition disabled: {e}")
+    fre = None
+    FACE_RECOGNITION_ENABLED = False
+
 app = Flask(__name__, template_folder='../templates')
 CORS(app)
 
 # In-memory cache for latest readings (for backward compatibility)
 latest_readings = {}
+
+# A device is considered online if it sent data within this many seconds
+DEVICE_TIMEOUT_SECS = 15
 
 # Database setup
 DB_PATH = Path(__file__).parent / 'sensors.db'
@@ -80,10 +92,54 @@ def init_db():
         CREATE TABLE IF NOT EXISTS devices (
             device_id   TEXT PRIMARY KEY,
             location    TEXT,
+            lat         REAL DEFAULT NULL,
+            lng         REAL DEFAULT NULL,
             model_path  TEXT,
             trained_at  DATETIME,
             last_seen   DATETIME,
             status      TEXT DEFAULT 'training'
+        );
+        
+        CREATE TABLE IF NOT EXISTS cameras (
+            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+            name                      TEXT NOT NULL,
+            rtsp_url                  TEXT NOT NULL,
+            type                      TEXT DEFAULT 'RTSP',
+            device_id                 TEXT,
+            location                  TEXT,
+            lat                       REAL,
+            lng                       REAL,
+            enabled                   INTEGER DEFAULT 1,
+            face_recognition_enabled  INTEGER DEFAULT 0,
+            recording_enabled         INTEGER DEFAULT 1,
+            created_at                DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at                DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        CREATE TABLE IF NOT EXISTS persons (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            name                 TEXT NOT NULL,
+            employee_id          TEXT UNIQUE,
+            role                 TEXT,
+            department           TEXT,
+            photo_path           TEXT,
+            face_encoding_path   TEXT,
+            authorized           INTEGER DEFAULT 1,
+            notes                TEXT,
+            created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        CREATE TABLE IF NOT EXISTS face_detections (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            camera_id      INTEGER NOT NULL,
+            person_id      INTEGER,
+            confidence     REAL,
+            snapshot_path  TEXT,
+            timestamp      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            alert_created  INTEGER DEFAULT 0,
+            FOREIGN KEY (camera_id) REFERENCES cameras(id),
+            FOREIGN KEY (person_id) REFERENCES persons(id)
         );
         
         -- Indexes for performance
@@ -93,10 +149,60 @@ def init_db():
             ON alerts(device_id, timestamp DESC);
         CREATE INDEX IF NOT EXISTS idx_alerts_resolved 
             ON alerts(resolved);
+        CREATE INDEX IF NOT EXISTS idx_face_detections_timestamp
+            ON face_detections(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_face_detections_camera
+            ON face_detections(camera_id, timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_face_detections_person
+            ON face_detections(person_id, timestamp DESC);
     """)
     conn.commit()
+    # Add lat/lng columns if upgrading from older schema
+    try:
+        conn.execute("ALTER TABLE devices ADD COLUMN lat REAL DEFAULT NULL")
+        conn.execute("ALTER TABLE devices ADD COLUMN lng REAL DEFAULT NULL")
+        conn.commit()
+    except Exception:
+        pass  # Columns already exist
     conn.close()
+    
+    # Create directories for face recognition data
+    data_dir = Path(__file__).parent / 'data'
+    (data_dir / 'persons' / 'photos').mkdir(parents=True, exist_ok=True)
+    (data_dir / 'persons' / 'encodings').mkdir(parents=True, exist_ok=True)
+    (data_dir / 'detections').mkdir(parents=True, exist_ok=True)
+    
     print("✅ Database initialized successfully")
+
+
+# Default device locations (Riyadh) – used when no GPS fix available
+_DEFAULT_LOCATIONS = {
+    'esp32_1': (24.7136, 46.6753),
+    'esp32_2': (24.7140, 46.6760),
+}
+
+
+def _seed_device_locations():
+    """Seed default lat/lng for known devices that have no location yet."""
+    conn = get_db()
+    for dev_id, (lat, lng) in _DEFAULT_LOCATIONS.items():
+        conn.execute(
+            "UPDATE devices SET lat=?, lng=? WHERE device_id=? AND lat IS NULL",
+            (lat, lng, dev_id),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _auto_train_all():
+    """Run auto-training for every device that has enough data but no model."""
+    conn = get_db()
+    device_ids = [r[0] for r in conn.execute("SELECT device_id FROM devices").fetchall()]
+    conn.close()
+    for dev_id in device_ids:
+        trained = ai_engine.auto_train_if_ready(dev_id)
+        if trained:
+            print(f"🤖 Auto-trained model for {dev_id}")
 
 # MQTT Message Handler
 def on_message(client, userdata, msg):
@@ -137,13 +243,15 @@ def on_message(client, userdata, msg):
         # Save to database
         conn = get_db()
         
-        # Update device last_seen
+        # Update device last_seen (preserve lat/lng if already set)
         conn.execute(
             """INSERT OR REPLACE INTO devices 
-               (device_id, last_seen, status, location) 
+               (device_id, last_seen, status, location, lat, lng) 
                VALUES (?, ?, COALESCE((SELECT status FROM devices WHERE device_id=?), 'training'), 
-                       COALESCE((SELECT location FROM devices WHERE device_id=?), 'Unknown'))""",
-            (device_id, _to_db_datetime(datetime.now()), device_id, device_id)
+                       COALESCE((SELECT location FROM devices WHERE device_id=?), 'Unknown'),
+                       (SELECT lat FROM devices WHERE device_id=?),
+                       (SELECT lng FROM devices WHERE device_id=?))""",
+            (device_id, _to_db_datetime(datetime.now()), device_id, device_id, device_id, device_id)
         )
         
         # Try AI prediction (skip if model not trained yet)
@@ -476,10 +584,26 @@ def get_devices():
            ORDER BY last_seen DESC"""
     ).fetchall()
     conn.close()
-    
+
+    now = datetime.now()
+    result = []
+    for row in rows:
+        d = dict(row)
+        # Compute live online status from in-memory cache timestamp
+        cached = latest_readings.get(d['device_id'])
+        if cached and cached.get('timestamp'):
+            try:
+                last_ts = datetime.fromisoformat(cached['timestamp'])
+                d['online'] = (now - last_ts).total_seconds() <= DEVICE_TIMEOUT_SECS
+            except Exception:
+                d['online'] = False
+        else:
+            d['online'] = False
+        result.append(d)
+
     return jsonify({
         'success': True,
-        'data': [dict(row) for row in rows]
+        'data': result
     })
 
 @app.route('/api/stats')
@@ -497,7 +621,11 @@ def get_stats():
         'open_alerts': conn.execute(
             "SELECT COUNT(*) FROM alerts WHERE resolved = 0"
         ).fetchone()[0],
-        'devices_online': len([d for d in latest_readings.keys() if d != 'default']),
+        'devices_online': sum(
+            1 for d, v in latest_readings.items()
+            if d != 'default' and v.get('timestamp') and
+            (datetime.now() - datetime.fromisoformat(v['timestamp'])).total_seconds() <= DEVICE_TIMEOUT_SECS
+        ),
         'devices_total': conn.execute(
             "SELECT COUNT(*) FROM devices"
         ).fetchone()[0],
@@ -560,10 +688,607 @@ def get_models():
         }
     })
 
+
+# ─── Analytics Routes ─────────────────────────────────────────────
+
+@app.route('/api/analytics/security')
+def analytics_security():
+    """Aggregated security event analytics (optional ?device_id=...)"""
+    device_id = request.args.get('device_id')
+    try:
+        data = ai_engine.analyze_security_events(device_id)
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/analytics/trends')
+def analytics_trends():
+    """Time-series sensor data for a device (required ?device_id=, optional ?hours=24)"""
+    device_id = request.args.get('device_id')
+    if not device_id:
+        return jsonify({'success': False, 'error': 'device_id required'}), 400
+    hours = int(request.args.get('hours', 24))
+    try:
+        rows = ai_engine.get_sensor_trends(device_id, hours)
+        return jsonify({'success': True, 'data': rows})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/analytics/heatmap')
+def analytics_heatmap():
+    """Hourly alert heatmap for the last 7 days"""
+    device_id = request.args.get('device_id')
+    try:
+        result = ai_engine.analyze_security_events(device_id)
+        return jsonify({'success': True, 'data': result.get('hourly_heatmap', [])})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/report/data')
+def report_data():
+    """Compile all data needed for PDF / print report."""
+    conn = get_db()
+    try:
+        # Summary counts
+        total_alerts = conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+        critical_alerts = conn.execute(
+            "SELECT COUNT(*) FROM alerts WHERE severity='CRITICAL'"
+        ).fetchone()[0]
+        total_readings = conn.execute("SELECT COUNT(*) FROM readings").fetchone()[0]
+        total_devices  = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+
+        # Recent alerts (last 100)
+        alert_rows = conn.execute(
+            """SELECT id, device_id, timestamp, alert_type, severity, ai_score, resolved
+               FROM alerts ORDER BY timestamp DESC LIMIT 100"""
+        ).fetchall()
+        alerts = [dict(r) for r in alert_rows]
+
+        # Devices with location
+        dev_rows = conn.execute(
+            "SELECT device_id, location, lat, lng, status, trained_at, last_seen FROM devices"
+        ).fetchall()
+        devices = [dict(r) for r in dev_rows]
+
+        # Security analytics
+        analytics = ai_engine.analyze_security_events()
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'generated_at':   datetime.now().isoformat(),
+                'summary': {
+                    'total_alerts':    total_alerts,
+                    'critical_alerts': critical_alerts,
+                    'total_readings':  total_readings,
+                    'total_devices':   total_devices,
+                },
+                'alerts':    alerts,
+                'devices':   devices,
+                'analytics': analytics,
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/devices/<device_id>/location', methods=['PATCH'])
+def update_device_location(device_id):
+    """Update device GPS coordinates and/or location name."""
+    body = request.get_json(force=True) or {}
+    lat      = body.get('lat')
+    lng      = body.get('lng')
+    location = body.get('location')
+    conn = get_db()
+    try:
+        if lat is not None and lng is not None:
+            conn.execute(
+                "UPDATE devices SET lat=?, lng=? WHERE device_id=?",
+                (float(lat), float(lng), device_id)
+            )
+        if location:
+            conn.execute(
+                "UPDATE devices SET location=? WHERE device_id=?",
+                (location, device_id)
+            )
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Camera Management Routes
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/cameras', methods=['GET'])
+def get_cameras():
+    """Get all cameras with status"""
+    conn = get_db()
+    try:
+        cameras = conn.execute(
+            """SELECT * FROM cameras ORDER BY created_at DESC"""
+        ).fetchall()
+        
+        result = []
+        for cam in cameras:
+            cam_dict = dict(cam)
+            # TODO: Check online status via recorder snapshot test
+            cam_dict['online'] = cam_dict['enabled'] == 1
+            result.append(cam_dict)
+        
+        return jsonify({'success': True, 'data': result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/cameras', methods=['POST'])
+def create_camera():
+    """Create a new camera"""
+    data = request.get_json(force=True) or {}
+    
+    name = data.get('name')
+    rtsp_url = data.get('rtsp_url')
+    cam_type = data.get('type', 'RTSP')
+    device_id = data.get('device_id')
+    location = data.get('location')
+    lat = data.get('lat')
+    lng = data.get('lng')
+    face_recognition_enabled = data.get('face_recognition_enabled', 0)
+    recording_enabled = data.get('recording_enabled', 1)
+    
+    if not name or not rtsp_url:
+        return jsonify({'success': False, 'error': 'name and rtsp_url are required'}), 400
+    
+    conn = get_db()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO cameras 
+               (name, rtsp_url, type, device_id, location, lat, lng, 
+                face_recognition_enabled, recording_enabled)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, rtsp_url, cam_type, device_id, location, lat, lng,
+             face_recognition_enabled, recording_enabled)
+        )
+        camera_id = cursor.lastrowid
+        conn.commit()
+        
+        # Get created camera
+        camera = conn.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        
+        return jsonify({'success': True, 'data': dict(camera)}), 201
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/cameras/<int:camera_id>', methods=['PATCH'])
+def update_camera(camera_id):
+    """Update camera settings"""
+    data = request.get_json(force=True) or {}
+    
+    conn = get_db()
+    try:
+        # Build update query dynamically
+        updates = []
+        params = []
+        
+        for field in ['name', 'rtsp_url', 'type', 'device_id', 'location', 'lat', 'lng',
+                      'enabled', 'face_recognition_enabled', 'recording_enabled']:
+            if field in data:
+                updates.append(f"{field}=?")
+                params.append(data[field])
+        
+        if not updates:
+            return jsonify({'success': False, 'error': 'No fields to update'}), 400
+        
+        updates.append("updated_at=CURRENT_TIMESTAMP")
+        params.append(camera_id)
+        
+        query = f"UPDATE cameras SET {', '.join(updates)} WHERE id=?"
+        conn.execute(query, params)
+        conn.commit()
+        
+        # Get updated camera
+        camera = conn.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        
+        if not camera:
+            return jsonify({'success': False, 'error': 'Camera not found'}), 404
+        
+        return jsonify({'success': True, 'data': dict(camera)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/cameras/<int:camera_id>', methods=['DELETE'])
+def delete_camera(camera_id):
+    """Delete camera"""
+    conn = get_db()
+    try:
+        # Check if camera exists
+        camera = conn.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        
+        if not camera:
+            return jsonify({'success': False, 'error': 'Camera not found'}), 404
+        
+        # Stop face recognition if running
+        if FACE_RECOGNITION_ENABLED:
+            try:
+                fre.stop_face_recognition_loop(camera_id)
+            except Exception:
+                pass
+        
+        # Delete camera
+        conn.execute("DELETE FROM cameras WHERE id=?", (camera_id,))
+        conn.commit()
+        
+        return jsonify({'success': True, 'message': 'Camera deleted'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/cameras/<int:camera_id>/test', methods=['GET'])
+def test_camera(camera_id):
+    """Test camera connectivity"""
+    conn = get_db()
+    try:
+        camera = conn.execute("SELECT * FROM cameras WHERE id=?", (camera_id,)).fetchone()
+        
+        if not camera:
+            return jsonify({'success': False, 'error': 'Camera not found'}), 404
+        
+        # Try to capture snapshot
+        try:
+            snapshot_data = cam_recorder.capture_snapshot_by_camera_id(camera_id)
+            
+            if snapshot_data:
+                return jsonify({
+                    'success': True,
+                    'online': True,
+                    'message': 'Camera connection successful'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'online': False,
+                    'error': 'Failed to capture snapshot'
+                })
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'online': False,
+                'error': str(e)
+            })
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Person Management Routes
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/persons', methods=['GET'])
+def get_persons():
+    """Get all registered persons"""
+    conn = get_db()
+    try:
+        persons = conn.execute(
+            """SELECT * FROM persons ORDER BY created_at DESC"""
+        ).fetchall()
+        
+        result = []
+        for person in persons:
+            p_dict = dict(person)
+            # Add photo URL
+            if p_dict['photo_path']:
+                p_dict['photo_url'] = f"/api/persons/{p_dict['id']}/photo"
+            else:
+                p_dict['photo_url'] = None
+            result.append(p_dict)
+        
+        return jsonify({'success': True, 'data': result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/persons', methods=['POST'])
+def create_person():
+    """Register a new person with photo"""
+    try:
+        # Get form data
+        name = request.form.get('name')
+        employee_id = request.form.get('employee_id')
+        role = request.form.get('role')
+        department = request.form.get('department')
+        notes = request.form.get('notes')
+        authorized = int(request.form.get('authorized', 1))
+        
+        if not name or not employee_id:
+            return jsonify({'success': False, 'error': 'name and employee_id are required'}), 400
+        
+        # Get photo file
+        if 'photo' not in request.files:
+            return jsonify({'success': False, 'error': 'photo file is required'}), 400
+        
+        photo_file = request.files['photo']
+        
+        if photo_file.filename == '':
+            return jsonify({'success': False, 'error': 'No photo file selected'}), 400
+        
+        # Register person using face recognition engine
+        if not FACE_RECOGNITION_ENABLED:
+            return jsonify({'success': False, 'error': 'Face recognition not available'}), 503
+        
+        success, message, person_id = fre.register_person(
+            name, employee_id, photo_file, role, department, notes, authorized
+        )
+        
+        if success:
+            # Get created person
+            conn = get_db()
+            person = conn.execute("SELECT * FROM persons WHERE id=?", (person_id,)).fetchone()
+            conn.close()
+            
+            person_dict = dict(person)
+            person_dict['photo_url'] = f"/api/persons/{person_id}/photo"
+            
+            return jsonify({'success': True, 'data': person_dict, 'message': message}), 201
+        else:
+            return jsonify({'success': False, 'error': message}), 400
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/persons/<int:person_id>', methods=['PATCH'])
+def update_person(person_id):
+    """Update person information"""
+    conn = get_db()
+    try:
+        # Check if updating with new photo
+        if 'photo' in request.files:
+            # Re-register with new photo
+            photo_file = request.files['photo']
+            name = request.form.get('name')
+            employee_id = request.form.get('employee_id')
+            role = request.form.get('role')
+            department = request.form.get('department')
+            notes = request.form.get('notes')
+            authorized = int(request.form.get('authorized', 1))
+            
+            # Delete old person
+            conn.execute("DELETE FROM persons WHERE id=?", (person_id,))
+            conn.commit()
+            
+            # Re-register
+            if not FACE_RECOGNITION_ENABLED:
+                return jsonify({'success': False, 'error': 'Face recognition not available'}), 503
+            
+            success, message, new_id = fre.register_person(
+                name, employee_id, photo_file, role, department, notes, authorized
+            )
+            
+            if not success:
+                return jsonify({'success': False, 'error': message}), 400
+            
+            person = conn.execute("SELECT * FROM persons WHERE id=?", (new_id,)).fetchone()
+        else:
+            # Update metadata only
+            data = request.get_json(force=True) or {}
+            
+            updates = []
+            params = []
+            
+            for field in ['name', 'employee_id', 'role', 'department', 'notes', 'authorized']:
+                if field in data:
+                    updates.append(f"{field}=?")
+                    params.append(data[field])
+            
+            if not updates:
+                return jsonify({'success': False, 'error': 'No fields to update'}), 400
+            
+            updates.append("updated_at=CURRENT_TIMESTAMP")
+            params.append(person_id)
+            
+            query = f"UPDATE persons SET {', '.join(updates)} WHERE id=?"
+            conn.execute(query, params)
+            conn.commit()
+            
+            person = conn.execute("SELECT * FROM persons WHERE id=?", (person_id,)).fetchone()
+        
+        if not person:
+            return jsonify({'success': False, 'error': 'Person not found'}), 404
+        
+        person_dict = dict(person)
+        person_dict['photo_url'] = f"/api/persons/{person_dict['id']}/photo"
+        
+        return jsonify({'success': True, 'data': person_dict})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/persons/<int:person_id>', methods=['DELETE'])
+def delete_person(person_id):
+    """Delete a person"""
+    conn = get_db()
+    try:
+        person = conn.execute("SELECT * FROM persons WHERE id=?", (person_id,)).fetchone()
+        
+        if not person:
+            return jsonify({'success': False, 'error': 'Person not found'}), 404
+        
+        # Delete files
+        if person['photo_path']:
+            Path(person['photo_path']).unlink(missing_ok=True)
+        if person['face_encoding_path']:
+            Path(person['face_encoding_path']).unlink(missing_ok=True)
+        
+        # Delete from database
+        conn.execute("DELETE FROM persons WHERE id=?", (person_id,))
+        conn.commit()
+        
+        # Reload encoding cache
+        if FACE_RECOGNITION_ENABLED:
+            fre._reload_encoding_cache()
+        
+        return jsonify({'success': True, 'message': 'Person deleted'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/persons/<int:person_id>/photo', methods=['GET'])
+def get_person_photo(person_id):
+    """Serve person photo"""
+    conn = get_db()
+    try:
+        person = conn.execute("SELECT photo_path FROM persons WHERE id=?", (person_id,)).fetchone()
+        
+        if not person or not person['photo_path']:
+            return jsonify({'success': False, 'error': 'Photo not found'}), 404
+        
+        photo_path = Path(person['photo_path'])
+        
+        if not photo_path.exists():
+            return jsonify({'success': False, 'error': 'Photo file not found'}), 404
+        
+        return send_file(str(photo_path), mimetype='image/jpeg')
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Face Detection Analytics Routes
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/face-detections', methods=['GET'])
+def get_face_detections():
+    """Get face detection history with filters"""
+    camera_id = request.args.get('camera_id', type=int)
+    person_id = request.args.get('person_id', type=int)
+    hours = request.args.get('hours', 24, type=int)
+    unknown_only = request.args.get('unknown_only', 'false').lower() == 'true'
+    limit = request.args.get('limit', 100, type=int)
+    
+    conn = get_db()
+    try:
+        query = """
+            SELECT fd.*, c.name as camera_name, c.location, p.name as person_name
+            FROM face_detections fd
+            JOIN cameras c ON fd.camera_id = c.id
+            LEFT JOIN persons p ON fd.person_id = p.id
+            WHERE fd.timestamp >= datetime('now', '-{} hours')
+        """.format(hours)
+        
+        params = []
+        
+        if camera_id:
+            query += " AND fd.camera_id = ?"
+            params.append(camera_id)
+        
+        if person_id:
+            query += " AND fd.person_id = ?"
+            params.append(person_id)
+        
+        if unknown_only:
+            query += " AND fd.person_id IS NULL"
+        
+        query += " ORDER BY fd.timestamp DESC LIMIT ?"
+        params.append(limit)
+        
+        detections = conn.execute(query, params).fetchall()
+        
+        result = [dict(d) for d in detections]
+        
+        return jsonify({'success': True, 'data': result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/face-analytics/unknown', methods=['GET'])
+def get_unknown_faces():
+    """Get clustered unknown faces"""
+    hours = request.args.get('hours', 24, type=int)
+    
+    if not FACE_RECOGNITION_ENABLED:
+        return jsonify({'success': False, 'error': 'Face recognition not available'}), 503
+    
+    try:
+        unknown_faces = fre.get_unknown_faces(hours=hours)
+        
+        return jsonify({'success': True, 'data': unknown_faces})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/face-analytics/timeline', methods=['GET'])
+def get_person_timeline():
+    """Get person movement timeline"""
+    person_id = request.args.get('person_id', type=int)
+    hours = request.args.get('hours', 24, type=int)
+    
+    if not person_id:
+        return jsonify({'success': False, 'error': 'person_id is required'}), 400
+    
+    if not FACE_RECOGNITION_ENABLED:
+        return jsonify({'success': False, 'error': 'Face recognition not available'}), 503
+    
+    try:
+        timeline = fre.get_person_detections(person_id, hours=hours)
+        
+        return jsonify({'success': True, 'data': timeline})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ─── Initialization ───────────────────────────────────────────────
+
+def _start_face_recognition_for_cameras():
+    """Start face recognition loops for cameras with FR enabled"""
+    if not FACE_RECOGNITION_ENABLED:
+        return
+    try:
+        conn = get_db()
+        cameras = conn.execute(
+            "SELECT id FROM cameras WHERE enabled=1 AND face_recognition_enabled=1"
+        ).fetchall()
+        conn.close()
+        
+        for cam in cameras:
+            fre.start_face_recognition_loop(cam['id'], interval=5)
+            print(f"🔍 Started face recognition for camera {cam['id']}")
+    except Exception as e:
+        print(f"⚠️  Error starting face recognition: {e}")
+
 
 # Initialize database on startup
 init_db()
+_seed_device_locations()
+threading.Thread(target=_auto_train_all, daemon=True).start()
+
+# Start face recognition for enabled cameras
+threading.Thread(target=_start_face_recognition_for_cameras, daemon=True).start()
 
 # Start MQTT client thread
 threading.Thread(target=mqtt_thread, daemon=True).start()
