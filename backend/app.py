@@ -10,10 +10,32 @@ import ai_engine
 import notifier
 import recorder
 
+
+def _load_env_file():
+    """Lightweight .env loader (no external dependency)."""
+    env_path = Path(__file__).parent.parent / '.env'
+    if not env_path.exists():
+        return
+
+    for raw in env_path.read_text(encoding='utf-8').splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_env_file()
+
 # Try to import face_recognition_engine - optional feature
 try:
     import face_recognition_engine as fre
-    FACE_RECOGNITION_ENABLED = True
+    FACE_RECOGNITION_ENABLED = bool(
+        fre._cloud_recognition_active() if hasattr(fre, '_cloud_recognition_active') else True
+    )
 except Exception as e:
     print(f"⚠️  Face recognition disabled: {e}")
     fre = None
@@ -27,6 +49,12 @@ latest_readings = {}
 
 # A device is considered online if it sent data within this many seconds
 DEVICE_TIMEOUT_SECS = 15
+
+# Performance controls for constrained devices (e.g., Raspberry Pi)
+FR_LOOP_INTERVAL_SECS = max(5, int(os.getenv('FACE_RECOGNITION_LOOP_INTERVAL_SECS', '8')))
+RECORDING_COOLDOWN_SECS = max(15, int(os.getenv('RECORDING_COOLDOWN_SECS', '90')))
+_last_recording_started_at = {}
+_last_recording_lock = threading.Lock()
 
 # Database setup
 DB_PATH = Path(__file__).parent / 'sensors.db'
@@ -124,6 +152,7 @@ def init_db():
             department           TEXT,
             photo_path           TEXT,
             face_encoding_path   TEXT,
+            cloud_subject        TEXT,
             authorized           INTEGER DEFAULT 1,
             notes                TEXT,
             created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -164,6 +193,11 @@ def init_db():
         conn.commit()
     except Exception:
         pass  # Columns already exist
+    try:
+        conn.execute("ALTER TABLE persons ADD COLUMN cloud_subject TEXT")
+        conn.commit()
+    except Exception:
+        pass  # Column already exists
     conn.close()
     
     # Create directories for face recognition data
@@ -267,11 +301,21 @@ def on_message(client, userdata, msg):
             if prediction['anomaly'] and alert_type != 'NORMAL':
                 severity = ai_engine.get_severity(alert_type, ai_score)
                 
-                # Start video recording (if camera configured)
+                # Start video recording with cooldown (if camera configured)
                 video_path = None
                 cam_recorder = recorder.get_recorder()
                 if cam_recorder.ffmpeg_available:
-                    video_path = cam_recorder.record_alert(device_id, alert_type, duration=30)
+                    now_ts = time.time()
+                    should_record = True
+                    with _last_recording_lock:
+                        last_ts = _last_recording_started_at.get(device_id, 0)
+                        if (now_ts - last_ts) < RECORDING_COOLDOWN_SECS:
+                            should_record = False
+                        else:
+                            _last_recording_started_at[device_id] = now_ts
+
+                    if should_record:
+                        video_path = cam_recorder.record_alert(device_id, alert_type, duration=30)
                 
                 # Insert alert with video path
                 conn.execute(
@@ -539,6 +583,28 @@ def get_camera_stream(device_id):
     return Response(
         cam_recorder.mjpeg_stream(device_id),
         mimetype='multipart/x-mixed-replace; boundary=ffmpeg'
+    )
+
+
+@app.route('/api/cameras/<int:camera_id>/mjpeg')
+def get_camera_mjpeg(camera_id):
+    """Return live MJPEG stream for a camera by its numeric database ID."""
+    cam_recorder = recorder.get_recorder()
+
+    if not cam_recorder.ffmpeg_available:
+        return jsonify({'success': False, 'error': 'ffmpeg not installed'}), 503
+
+    fps = request.args.get('fps', 5, type=int)
+    fps = max(1, min(fps, 15))  # clamp 1-15 FPS
+
+    return Response(
+        cam_recorder.mjpeg_stream_by_id(camera_id, fps=fps),
+        mimetype='multipart/x-mixed-replace; boundary=frame',
+        headers={
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+        }
     )
 
 
@@ -904,6 +970,16 @@ def update_camera(camera_id):
         
         if not camera:
             return jsonify({'success': False, 'error': 'Camera not found'}), 404
+
+        # Start/stop recognition loop based on camera settings
+        if FACE_RECOGNITION_ENABLED and hasattr(fre, 'start_face_recognition_loop'):
+            try:
+                if int(camera['enabled']) == 1 and int(camera['face_recognition_enabled']) == 1:
+                    fre.start_face_recognition_loop(camera_id, interval=FR_LOOP_INTERVAL_SECS)
+                else:
+                    fre.stop_face_recognition_loop(camera_id)
+            except Exception as loop_err:
+                print(f"⚠️  Could not update face recognition loop for camera {camera_id}: {loop_err}")
         
         return jsonify({'success': True, 'data': dict(camera)})
     except Exception as e:
@@ -953,13 +1029,19 @@ def test_camera(camera_id):
         
         # Try to capture snapshot
         try:
+            cam_recorder = recorder.get_recorder()
             snapshot_data = cam_recorder.capture_snapshot_by_camera_id(camera_id)
             
             if snapshot_data:
+                import base64
+                snapshot_base64 = base64.b64encode(snapshot_data).decode('utf-8')
                 return jsonify({
                     'success': True,
                     'online': True,
-                    'message': 'Camera connection successful'
+                    'message': 'Camera connection successful',
+                    'data': {
+                        'snapshot': f'data:image/jpeg;base64,{snapshot_base64}'
+                    }
                 })
             else:
                 return jsonify({
@@ -1031,10 +1113,6 @@ def create_person():
         if photo_file.filename == '':
             return jsonify({'success': False, 'error': 'No photo file selected'}), 400
         
-        # Register person using face recognition engine
-        if not FACE_RECOGNITION_ENABLED:
-            return jsonify({'success': False, 'error': 'Face recognition not available'}), 503
-        
         success, message, person_id = fre.register_person(
             name, employee_id, photo_file, role, department, notes, authorized
         )
@@ -1075,10 +1153,6 @@ def update_person(person_id):
             # Delete old person
             conn.execute("DELETE FROM persons WHERE id=?", (person_id,))
             conn.commit()
-            
-            # Re-register
-            if not FACE_RECOGNITION_ENABLED:
-                return jsonify({'success': False, 'error': 'Face recognition not available'}), 503
             
             success, message, new_id = fre.register_person(
                 name, employee_id, photo_file, role, department, notes, authorized
@@ -1138,7 +1212,7 @@ def delete_person(person_id):
         # Delete files
         if person['photo_path']:
             Path(person['photo_path']).unlink(missing_ok=True)
-        if person['face_encoding_path']:
+        if person['face_encoding_path'] and not str(person['face_encoding_path']).startswith('cloud:'):
             Path(person['face_encoding_path']).unlink(missing_ok=True)
         
         # Delete from database
@@ -1192,7 +1266,9 @@ def get_face_detections():
     conn = get_db()
     try:
         query = """
-            SELECT fd.*, c.name as camera_name, c.location, p.name as person_name
+            SELECT fd.*, c.name as camera_name, c.location,
+                   p.name as person_name, p.employee_id as person_employee_id,
+                   p.authorized as person_authorized
             FROM face_detections fd
             JOIN cameras c ON fd.camera_id = c.id
             LEFT JOIN persons p ON fd.person_id = p.id
@@ -1276,8 +1352,8 @@ def _start_face_recognition_for_cameras():
         conn.close()
         
         for cam in cameras:
-            fre.start_face_recognition_loop(cam['id'], interval=5)
-            print(f"🔍 Started face recognition for camera {cam['id']}")
+            fre.start_face_recognition_loop(cam['id'], interval=FR_LOOP_INTERVAL_SECS)
+            print(f"🔍 Started face recognition for camera {cam['id']} (interval={FR_LOOP_INTERVAL_SECS}s)")
     except Exception as e:
         print(f"⚠️  Error starting face recognition: {e}")
 

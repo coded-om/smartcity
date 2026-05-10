@@ -1,66 +1,28 @@
-const DEFAULT_PORT = Number(process.env.REACT_APP_BACKEND_PORT || 5000);
-
-let cachedApiBase = null;
-let resolvingPromise = null;
-
-function buildApiBase(port) {
-  return `http://${window.location.hostname}:${port}/api`;
-}
-
-function candidatePorts() {
-  const preferred = [DEFAULT_PORT];
-  const fallback = [5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008, 5009, 5010];
-  return [...new Set([...preferred, ...fallback])];
-}
-
-async function probeApiBase(baseUrl) {
-  try {
-    const response = await fetch(`${baseUrl}/stats`);
-    const payload = await response.json();
-    return Boolean(payload && typeof payload === 'object' && 'success' in payload && 'data' in payload);
-  } catch {
-    return false;
-  }
-}
+// All API calls use relative paths so they go through the CRA dev-server proxy
+// (package.json "proxy" field) — no CORS headers needed.
+const BACKEND_PORT = Number(process.env.REACT_APP_BACKEND_PORT || 5000);
 
 export async function resolveApiBase() {
-  if (cachedApiBase) return cachedApiBase;
-  if (resolvingPromise) return resolvingPromise;
-
-  resolvingPromise = (async () => {
-    for (const port of candidatePorts()) {
-      const baseUrl = buildApiBase(port);
-      // eslint-disable-next-line no-await-in-loop
-      if (await probeApiBase(baseUrl)) {
-        cachedApiBase = baseUrl;
-        return cachedApiBase;
-      }
-    }
-
-    // Fallback keeps behavior predictable even if discovery fails.
-    cachedApiBase = buildApiBase(DEFAULT_PORT);
-    return cachedApiBase;
-  })();
-
-  try {
-    return await resolvingPromise;
-  } finally {
-    resolvingPromise = null;
-  }
+  return '/api';
 }
 
 export function getApiBase() {
-  return cachedApiBase || buildApiBase(DEFAULT_PORT);
+  return '/api';
 }
 
+// Absolute origin used only for media streams (MJPEG img src, etc.)
+// which cannot go through the CRA proxy.
 export function getApiOrigin() {
-  return getApiBase().replace(/\/api$/, '');
+  return `http://${window.location.hostname}:${BACKEND_PORT}`;
+}
+
+export function getPersonPhotoUrl(personId) {
+  return `/api/persons/${personId}/photo`;
 }
 
 export async function apiFetch(path, options = {}) {
-  const baseUrl = await resolveApiBase();
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return fetch(`${baseUrl}${normalizedPath}`, options);
+  return fetch(`/api${normalizedPath}`, options);
 }
 
 // ── MediaMTX HLS helpers ──────────────────────────────────────────────────────

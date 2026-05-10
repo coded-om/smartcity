@@ -20,6 +20,7 @@ import pickle
 import sqlite3
 import threading
 import time
+import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -57,6 +58,12 @@ DETECTIONS_DIR = DATA_DIR / 'detections'
 FACE_MATCH_THRESHOLD = 0.6  # Lower = stricter matching (range 0.0-1.0)
 FACE_DETECTION_MODEL = 'hog'  # 'hog' (fast, CPU) or 'cnn' (accurate, GPU)
 
+# Cloud provider configuration (Luxand)
+FACE_RECOGNITION_PROVIDER = os.getenv('FACE_RECOGNITION_PROVIDER', '').strip().lower()
+LUXAND_API_URL = os.getenv('LUXAND_API_URL', 'https://api.luxand.cloud').rstrip('/')
+LUXAND_TOKEN = os.getenv('LUXAND_TOKEN', '').strip()
+LUXAND_TIMEOUT_SECS = int(os.getenv('LUXAND_TIMEOUT_SECS', '10'))
+
 
 # ═══════════════════════════════════════════════════════════════
 # Database Helpers
@@ -66,6 +73,170 @@ def _check_face_recognition_available():
     """Check if face recognition is available, raise error if not"""
     if not FACE_RECOGNITION_AVAILABLE:
         raise RuntimeError("Face recognition not available. Install: pip install face-recognition")
+
+
+def _cloud_provider_enabled() -> bool:
+    """Whether cloud recognition provider is enabled and configured."""
+    return FACE_RECOGNITION_PROVIDER == 'luxand' and bool(LUXAND_TOKEN)
+
+
+def _cloud_recognition_active() -> bool:
+    """True if either local or cloud recognition can run."""
+    return FACE_RECOGNITION_AVAILABLE or _cloud_provider_enabled()
+
+
+def _luxand_headers() -> dict:
+    return {'token': LUXAND_TOKEN}
+
+
+def _parse_json_response(resp: requests.Response) -> dict:
+    """Best-effort JSON parse with readable errors."""
+    try:
+        return resp.json()
+    except Exception:
+        text = (resp.text or '').strip()
+        raise RuntimeError(f"Cloud provider returned non-JSON response: {text[:300]}")
+
+
+def _extract_cloud_candidates(payload) -> List[dict]:
+    """Normalize multiple possible cloud response shapes into a candidate list."""
+    if payload is None:
+        return []
+
+    if isinstance(payload, list):
+        return [p for p in payload if isinstance(p, dict)]
+
+    if isinstance(payload, dict):
+        for key in ('results', 'faces', 'matches', 'data'):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [p for p in value if isinstance(p, dict)]
+        return [payload]
+
+    return []
+
+
+def _extract_cloud_label(candidate: dict) -> Optional[str]:
+    for key in ('subject', 'name', 'person', 'person_id', 'uuid', 'id'):
+        value = candidate.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _extract_cloud_confidence(candidate: dict) -> float:
+    for key in ('probability', 'similarity', 'confidence', 'score'):
+        value = candidate.get(key)
+        if value is None:
+            continue
+        try:
+            f = float(value)
+            # Handle percentage-like values
+            return f / 100.0 if f > 1.0 else f
+        except Exception:
+            continue
+    return 0.0
+
+
+def _map_cloud_label_to_person(label: Optional[str]) -> Tuple[Optional[int], Optional[str]]:
+    """Map cloud returned label to local person record."""
+    if not label:
+        return None, None
+
+    conn = get_db()
+    try:
+        person = conn.execute(
+            """SELECT id, name FROM persons
+               WHERE cloud_subject=? OR employee_id=? OR face_encoding_path=?
+               LIMIT 1""",
+            (label, label, f"cloud:{label}")
+        ).fetchone()
+        if not person:
+            return None, None
+        return person['id'], person['name']
+    finally:
+        conn.close()
+
+
+def _luxand_enroll_subject(subject: str, photo_path: str) -> Tuple[bool, str, Optional[str]]:
+    """
+    Enroll a person photo in Luxand.
+
+    Returns:
+        (success, message, cloud_id_or_subject)
+    """
+    # Luxand flow: create subject, then upload photo to /subject/{id-or-uuid}
+    try:
+        create_resp = requests.post(
+            f"{LUXAND_API_URL}/subject",
+            headers=_luxand_headers(),
+            json={'name': subject},
+            timeout=LUXAND_TIMEOUT_SECS,
+        )
+        if create_resp.status_code not in (200, 201, 409):
+            data = _parse_json_response(create_resp)
+            raise RuntimeError(data.get('error') or data.get('message') or str(data))
+
+        create_data = _parse_json_response(create_resp)
+        attach_id = create_data.get('id') or create_data.get('uuid') or subject
+
+        with open(photo_path, 'rb') as photo_file:
+            attach_resp = requests.post(
+                f"{LUXAND_API_URL}/subject/{attach_id}",
+                headers=_luxand_headers(),
+                files={'photo': photo_file},
+                timeout=LUXAND_TIMEOUT_SECS,
+            )
+
+        if attach_resp.status_code not in (200, 201):
+            data = _parse_json_response(attach_resp)
+            raise RuntimeError(data.get('error') or data.get('message') or str(data))
+
+        data = _parse_json_response(attach_resp)
+        if isinstance(data, dict) and str(data.get('status', '')).lower() == 'failure':
+            raise RuntimeError(data.get('message') or data.get('error') or 'Cloud provider reported failure')
+
+        # On success, prefer stable subject UUID if available from create response.
+        cloud_id = create_data.get('uuid') or create_data.get('id') or data.get('uuid') or data.get('id') or str(attach_id)
+        return True, 'Enrolled in cloud provider', str(cloud_id)
+
+    except Exception as e:
+        return False, f"Cloud enrollment failed: {e}", None
+
+
+def _luxand_search_photo(photo_path: str) -> List[dict]:
+    """Search for known faces in photo using Luxand cloud with exponential backoff retry."""
+    last_error = None
+    backoff_delays = [0.1, 0.25, 0.5, 1.0]  # Exponential backoff: 100ms, 250ms, 500ms, 1s
+    
+    for attempt, delay in enumerate(backoff_delays, 1):
+        try:
+            with open(photo_path, 'rb') as photo_file:
+                resp = requests.post(
+                    f"{LUXAND_API_URL}/photo/search",
+                    headers=_luxand_headers(),
+                    files={'photo': photo_file},
+                    timeout=LUXAND_TIMEOUT_SECS,
+                )
+
+            if resp.status_code not in (200, 201):
+                data = _parse_json_response(resp)
+                raise RuntimeError(data.get('error') or data.get('message') or str(data))
+
+            payload = _parse_json_response(resp)
+            if isinstance(payload, dict) and str(payload.get('status', '')).lower() == 'failure':
+                raise RuntimeError(payload.get('message') or payload.get('error') or 'Cloud provider reported failure')
+
+            return _extract_cloud_candidates(payload)
+        except Exception as e:
+            last_error = e
+            if attempt < len(backoff_delays):
+                print(f"🔄 Luxand search retry {attempt}/{len(backoff_delays)} after {delay*1000:.0f}ms (error: {str(e)[:60]}...)")
+                time.sleep(delay)
+            else:
+                print(f"❌ Luxand search failed after {len(backoff_delays)} retries: {str(e)[:100]}")
+
+    raise RuntimeError(str(last_error) if last_error else 'Unknown cloud search error')
 
 
 def get_db():
@@ -205,9 +376,60 @@ def register_person(name: str, employee_id: str, photo_file,
             with open(photo_path, 'wb') as f:
                 f.write(photo_file.read())
         
+        if not FACE_RECOGNITION_AVAILABLE and _cloud_provider_enabled():
+            # Cloud flow: enroll with cloud provider and store cloud identifier.
+            cloud_subject = employee_id
+            success, cloud_msg, cloud_id = _luxand_enroll_subject(cloud_subject, str(photo_path))
+
+            if success:
+                conn.execute(
+                    """UPDATE persons
+                       SET photo_path=?, face_encoding_path=?, cloud_subject=?, updated_at=CURRENT_TIMESTAMP
+                       WHERE id=?""",
+                    (str(photo_path), f"cloud:{cloud_id}", cloud_subject, person_id)
+                )
+                conn.commit()
+                conn.close()
+                print(
+                    f"✅ Registered person with cloud recognition: {name} "
+                    f"(ID: {employee_id}, person_id: {person_id}, cloud_subject: {cloud_subject})"
+                )
+                return True, f"Successfully registered {name} (cloud recognition enabled)", person_id
+
+            # Fallback: still save person/photo even if cloud enrollment fails
+            conn.execute(
+                """UPDATE persons
+                   SET photo_path=?, face_encoding_path=NULL, cloud_subject=NULL, updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (str(photo_path), person_id)
+            )
+            conn.commit()
+            conn.close()
+            print(
+                f"⚠️  Registered person without cloud enrollment: {name} "
+                f"(ID: {employee_id}, person_id: {person_id}) — {cloud_msg}"
+            )
+            return True, f"Successfully registered {name} (photo saved; {cloud_msg})", person_id
+
+        if not FACE_RECOGNITION_AVAILABLE:
+            # Graceful fallback: save the person and photo, skip encoding.
+            conn.execute(
+                """UPDATE persons 
+                   SET photo_path=?, face_encoding_path=NULL, cloud_subject=NULL, updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (str(photo_path), person_id)
+            )
+            conn.commit()
+            conn.close()
+            print(
+                f"✅ Registered person without face recognition: {name} "
+                f"(ID: {employee_id}, person_id: {person_id})"
+            )
+            return True, f"Successfully registered {name} (photo saved; face recognition unavailable)", person_id
+
         # Extract face encoding
         result = extract_face_encoding(str(photo_path))
-        
+
         if result is None:
             # No face detected - rollback
             conn.execute("DELETE FROM persons WHERE id=?", (person_id,))
@@ -215,9 +437,9 @@ def register_person(name: str, employee_id: str, photo_file,
             conn.close()
             photo_path.unlink(missing_ok=True)
             return False, "No face detected in photo. Please upload a clear face image.", None
-        
+
         encoding, metadata = result
-        
+
         if metadata['num_faces'] > 1:
             # Multiple faces - rollback
             conn.execute("DELETE FROM persons WHERE id=?", (person_id,))
@@ -225,24 +447,24 @@ def register_person(name: str, employee_id: str, photo_file,
             conn.close()
             photo_path.unlink(missing_ok=True)
             return False, f"Multiple faces ({metadata['num_faces']}) detected. Please upload a photo with only one face.", None
-        
+
         # Save encoding
         encoding_path = PERSONS_ENCODINGS_DIR / f"person_{person_id}.pkl"
         save_encoding(encoding, str(encoding_path))
-        
+
         # Update person record with file paths
         conn.execute(
             """UPDATE persons 
-               SET photo_path=?, face_encoding_path=?, updated_at=CURRENT_TIMESTAMP
+               SET photo_path=?, face_encoding_path=?, cloud_subject=NULL, updated_at=CURRENT_TIMESTAMP
                WHERE id=?""",
             (str(photo_path), str(encoding_path), person_id)
         )
         conn.commit()
         conn.close()
-        
+
         # Invalidate encoding cache
         _reload_encoding_cache()
-        
+
         print(f"✅ Registered person: {name} (ID: {employee_id}, person_id: {person_id})")
         return True, f"Successfully registered {name}", person_id
         
@@ -269,7 +491,10 @@ def _reload_encoding_cache():
         conn.close()
         
         for person in persons:
-            encoding = load_encoding(person['face_encoding_path'])
+            encoding_path = person['face_encoding_path']
+            if not encoding_path or encoding_path.startswith('cloud:'):
+                continue
+            encoding = load_encoding(encoding_path)
             if encoding is not None:
                 _encoding_cache[person['id']] = encoding
         
@@ -334,6 +559,11 @@ def process_camera_frame(camera_id: int, frame_path: str) -> List[dict]:
         List of detection dicts: [{person_id, person_name, confidence, bbox, snapshot_path}]
     """
     detections = []
+
+    if not FACE_RECOGNITION_AVAILABLE:
+        if _cloud_provider_enabled():
+            return _process_camera_frame_cloud(camera_id, frame_path)
+        return []
     
     try:
         # Load image
@@ -402,6 +632,57 @@ def process_camera_frame(camera_id: int, frame_path: str) -> List[dict]:
         
     except Exception as e:
         print(f"❌ Error processing frame from camera {camera_id}: {e}")
+        return []
+
+
+def _process_camera_frame_cloud(camera_id: int, frame_path: str) -> List[dict]:
+    """Cloud-provider variant of frame processing."""
+    detections = []
+
+    try:
+        candidates = _luxand_search_photo(frame_path)
+        if not candidates:
+            return []
+
+        camera_detections_dir = DETECTIONS_DIR / f"cam_{camera_id}"
+        camera_detections_dir.mkdir(parents=True, exist_ok=True)
+
+        frame_img = Image.open(frame_path)
+
+        for i, cand in enumerate(candidates):
+            label = _extract_cloud_label(cand)
+            confidence = _extract_cloud_confidence(cand)
+            person_id, person_name = _map_cloud_label_to_person(label)
+
+            timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+            snapshot_filename = f"face_{timestamp_str}_{i}.jpg"
+            snapshot_path = camera_detections_dir / snapshot_filename
+            frame_img.save(str(snapshot_path))
+
+            detections.append({
+                'person_id': person_id,
+                'person_name': person_name,
+                'confidence': confidence,
+                'bbox': None,
+                'snapshot_path': str(snapshot_path),
+                'cloud_label': label,
+            })
+
+        conn = get_db()
+        for det in detections:
+            conn.execute(
+                """INSERT INTO face_detections
+                   (camera_id, person_id, confidence, snapshot_path, timestamp)
+                   VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                (camera_id, det['person_id'], det['confidence'], det['snapshot_path'])
+            )
+        conn.commit()
+        conn.close()
+
+        return detections
+
+    except Exception as e:
+        print(f"❌ Error processing cloud frame from camera {camera_id}: {e}")
         return []
 
 
@@ -582,5 +863,7 @@ def get_unknown_faces(hours: int = 24, limit: int = 50) -> List[dict]:
 if FACE_RECOGNITION_AVAILABLE:
     _reload_encoding_cache()
     print("✅ Face recognition engine initialized")
+elif _cloud_provider_enabled():
+    print("☁️  Cloud face recognition provider enabled (Luxand)")
 else:
     print("⚠️  Face recognition engine disabled (library not available)")

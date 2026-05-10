@@ -32,6 +32,151 @@ try:
 except Exception:
     cv2 = None
 
+
+class _LiveStreamBuffer:
+    """One ffmpeg process per RTSP camera, shared by all consumers.
+
+    Reads the RTSP stream continuously, stores the latest JPEG frame in
+    memory.  Snapshot and MJPEG-stream callers read from this buffer instead
+    of opening their own RTSP connection, keeping usage within the camera's
+    simultaneous-session limit.
+    """
+
+    # Class-level registry so every CameraRecorder instance shares the same
+    # per-camera process even if multiple CameraRecorder objects are created.
+    _registry: dict = {}
+    _registry_lock = threading.Lock()
+
+    @classmethod
+    def get(cls, camera_id: int, rtsp_url: str) -> '_LiveStreamBuffer':
+        """Return (and lazily create) the shared buffer for *camera_id*."""
+        with cls._registry_lock:
+            buf = cls._registry.get(camera_id)
+            if buf is None or not buf.alive():
+                if buf is not None:
+                    buf.stop()
+                buf = cls(camera_id, rtsp_url)
+                cls._registry[camera_id] = buf
+        return buf
+
+    def __init__(self, camera_id: int, rtsp_url: str):
+        self.camera_id = camera_id
+        self.rtsp_url = rtsp_url
+        self._latest_jpeg: bytes = None
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._process: subprocess.Popen = None
+        self._thread = threading.Thread(
+            target=self._run, daemon=True,
+            name=f'live-stream-{camera_id}'
+        )
+        self._thread.start()
+
+    # ------------------------------------------------------------------
+    # Internal reader loop
+    # ------------------------------------------------------------------
+
+    def _run(self):
+        cmd = [
+            'ffmpeg', '-hide_banner', '-loglevel', 'error',
+            '-rtsp_transport', 'tcp',
+            '-i', self.rtsp_url,
+            '-an',
+            '-vf', 'fps=5,scale=1280:720',
+            '-vcodec', 'mjpeg',
+            '-q:v', '4',
+            '-f', 'image2pipe',
+            'pipe:1',
+        ]
+        try:
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+            buf = b''
+            while not self._stop_event.is_set():
+                data = self._process.stdout.read(65536)
+                if not data:
+                    break
+                buf += data
+                # Parse back-to-back JPEG frames by SOI/EOI markers.
+                while True:
+                    s = buf.find(b'\xff\xd8')
+                    if s < 0:
+                        buf = b''
+                        break
+                    e = buf.find(b'\xff\xd9', s + 2)
+                    if e < 0:
+                        buf = buf[s:]      # keep incomplete frame
+                        break
+                    frame = buf[s:e + 2]
+                    with self._lock:
+                        self._latest_jpeg = frame
+                    buf = buf[e + 2:]
+        finally:
+            self._terminate()
+
+    def _terminate(self):
+        p = self._process
+        if p and p.poll() is None:
+            try:
+                p.terminate()
+                p.wait(timeout=3)
+            except Exception:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def alive(self) -> bool:
+        return (
+            self._thread.is_alive()
+            and self._process is not None
+            and self._process.poll() is None
+        )
+
+    def snapshot(self, timeout: float = 10.0) -> bytes:
+        """Return the latest JPEG frame, blocking up to *timeout* seconds."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._lock:
+                if self._latest_jpeg:
+                    return self._latest_jpeg
+            time.sleep(0.05)
+        return None
+
+    def stream(self, fps: int = 5):
+        """Generator yielding ``multipart/x-mixed-replace`` boundary chunks."""
+        interval = 1.0 / max(1, fps)
+        last_frame = None
+        # Wait up to 12 s for the first frame before giving up.
+        deadline = time.time() + 12.0
+        while not self._stop_event.is_set():
+            with self._lock:
+                current = self._latest_jpeg
+            if current is not None:
+                deadline = time.time() + 5.0   # reset watchdog
+                if current is not last_frame:
+                    last_frame = current
+                    yield (
+                        b'--frame\r\nContent-Type: image/jpeg\r\n'
+                        b'Content-Length: ' + str(len(current)).encode()
+                        + b'\r\n\r\n' + current + b'\r\n'
+                    )
+            elif time.time() > deadline:
+                break
+            time.sleep(interval)
+
+    def stop(self):
+        self._stop_event.set()
+        self._terminate()
+
 class CameraRecorder:
     """RTSP camera recorder using ffmpeg"""
     
@@ -47,6 +192,9 @@ class CameraRecorder:
         self.recordings_dir.mkdir(exist_ok=True)
         self._snapshot_cache = {}
         self._snapshot_lock = threading.Lock()
+        # Debounce: track cameras that already have a recording in progress.
+        self._recording_in_progress: set = set()
+        self._recording_lock = threading.Lock()
         self.preview_width = max(160, int(os.getenv('CAMERA_PREVIEW_WIDTH', '240')))
         self.preview_quality = min(31, max(2, int(os.getenv('CAMERA_PREVIEW_JPEG_QUALITY', '28'))))
         self.preview_interval_seconds = max(0.5, float(os.getenv('CAMERA_PREVIEW_INTERVAL', '2.5')))
@@ -89,15 +237,12 @@ class CameraRecorder:
             return False
 
     def _build_preview_ffmpeg_input_args(self, rtsp_url: str) -> list:
-        """Return shared ffmpeg input args for low-latency RTSP preview work."""
+        """Return shared ffmpeg input args for RTSP preview work."""
         return [
             'ffmpeg',
             '-hide_banner',
             '-loglevel', 'error',
             '-rtsp_transport', 'tcp',
-            '-rtsp_flags', 'prefer_tcp',
-            '-fflags', 'nobuffer',
-            '-flags', 'low_delay',
             '-i', rtsp_url,
         ]
     
@@ -242,11 +387,19 @@ class CameraRecorder:
         if not self.ffmpeg_available:
             return None
         
+        # Debounce: skip if a recording for this device is already running.
+        with self._recording_lock:
+            if device_id in self._recording_in_progress:
+                return None
+            self._recording_in_progress.add(device_id)
+
         # Get camera URL for this device (prefer MediaMTX local RTSP)
         rtsp_url = self._get_recording_url(device_id)
         
         if not rtsp_url:
             print(f"⚠️  No camera configured for {device_id}")
+            with self._recording_lock:
+                self._recording_in_progress.discard(device_id)
             return None
         
         # Generate filename
@@ -257,7 +410,7 @@ class CameraRecorder:
         # Record in background thread
         thread = threading.Thread(
             target=self._record_worker,
-            args=(rtsp_url, str(output_path), duration),
+            args=(rtsp_url, str(output_path), duration, device_id),
             daemon=True
         )
         thread.start()
@@ -266,8 +419,8 @@ class CameraRecorder:
         
         return str(output_path)
     
-    def _record_worker(self, rtsp_url: str, output_path: str, 
-                       duration: int):
+    def _record_worker(self, rtsp_url: str, output_path: str,
+                       duration: int, device_id: str = None):
         """Background worker for recording"""
         try:
             # Fast path: copy H264 stream without re-encoding
@@ -330,6 +483,10 @@ class CameraRecorder:
             print(f"⏱️  Recording timeout: {output_path}")
         except Exception as e:
             print(f"❌ Recording error: {e}")
+        finally:
+            if device_id:
+                with self._recording_lock:
+                    self._recording_in_progress.discard(device_id)
     
     def record_snapshot(self, device_id: str) -> str:
         """
@@ -355,9 +512,10 @@ class CameraRecorder:
             try:
                 cmd = self._build_preview_ffmpeg_input_args(rtsp_url) + [
                     '-frames:v', '1',
+                    '-update', '1',
                     '-an',
                     '-vf', f'scale={self.preview_width}:-2',
-                    '-q:v', str(self.preview_quality),
+                    '-q:v', '5', '-update', '1',
                     '-f', 'image2',
                     '-y',
                     str(output_path)
@@ -424,7 +582,7 @@ class CameraRecorder:
         cmd = self._build_preview_ffmpeg_input_args(rtsp_url) + [
             '-an',
             '-vf', f'fps={max(1, round(1 / self.preview_interval_seconds))},scale={self.preview_width}:-2',
-            '-q:v', str(self.preview_quality),
+            '-q:v', '5', '-update', '1',
             '-f', 'mpjpeg',
             'pipe:1',
         ]
@@ -455,6 +613,65 @@ class CameraRecorder:
                 stderr = process.stderr.read() if process.stderr else b''
                 if process.returncode not in (0, None):
                     print(f"❌ MJPEG stream failed: {self._format_subprocess_error(stderr, 'Unknown streaming error')}")
+
+    def mjpeg_stream_by_id(self, camera_id: int, fps: int = 5):
+        """Yield a direct MJPEG stream from ffmpeg for a camera looked up by database ID."""
+        if not self.ffmpeg_available:
+            return
+
+        try:
+            import sqlite3
+            db_path = Path(__file__).parent / 'sensors.db'
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            camera = conn.execute(
+                "SELECT * FROM cameras WHERE id=? AND enabled=1", (camera_id,)
+            ).fetchone()
+            conn.close()
+        except Exception as e:
+            print(f"❌ mjpeg_stream_by_id db error: {e}")
+            return
+
+        if not camera:
+            return
+
+        rtsp_url = camera['rtsp_url']
+        cam_type = camera['type']
+
+        if cam_type == 'ESP32-CAM':
+            # ESP32-CAM: poll common HTTP snapshot endpoints, yield frames manually
+            import requests, time
+            host = rtsp_url.rstrip('/')
+            if not host.startswith('http'):
+                host = f'http://{host}'
+            snapshot_paths = ['/capture', '/jpg/image.jpg', '/snapshot.jpg', '/image.jpg']
+            working_path = None
+            while True:
+                try:
+                    # Discover working path on first success
+                    paths_to_try = [working_path] if working_path else snapshot_paths
+                    for path in paths_to_try:
+                        try:
+                            resp = requests.get(f'{host}{path}', timeout=3)
+                            if resp.status_code == 200 and len(resp.content) > 100:
+                                working_path = path
+                                frame = resp.content
+                                yield (
+                                    b'--frame\r\nContent-Type: image/jpeg\r\n'
+                                    b'Content-Length: ' + str(len(frame)).encode() + b'\r\n\r\n'
+                                    + frame + b'\r\n'
+                                )
+                                break
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                time.sleep(1.0 / max(1, fps))
+            return
+
+        # RTSP camera — use the shared stream buffer (one ffmpeg connection).
+        buf = _LiveStreamBuffer.get(camera_id, rtsp_url)
+        yield from buf.stream(fps=fps)
 
     def get_live_snapshot(self, device_id: str, max_age_seconds: int = 3) -> str:
         """
@@ -519,40 +736,37 @@ class CameraRecorder:
             
             # Handle different camera types
             if cam_type == 'ESP32-CAM':
-                # HTTP snapshot for ESP32-CAM
+                # HTTP snapshot for ESP32-CAM — try /capture then /jpg/image.jpg
                 import requests
-                url = f"http://{rtsp_url}/capture"
-                response = requests.get(url, timeout=5)
-                if response.status_code == 200:
-                    return response.content
-                return None
-            else:
-                # RTSP camera - use ffmpeg
+                host = rtsp_url.rstrip('/')
+                if not host.startswith('http'):
+                    host = f'http://{host}'
+                for path in ['/capture', '/jpg/image.jpg', '/snapshot.jpg', '/image.jpg']:
+                    try:
+                        response = requests.get(f'{host}{path}', timeout=5)
+                        if response.status_code == 200 and len(response.content) > 100:
+                            return response.content
+                    except Exception:
+                        pass
+                # Fall back to RTSP snapshot if HTTP failed and rtsp_url looks like an IP
+                fallback_rtsp = camera.get('rtsp_url', '')
+                if fallback_rtsp and not fallback_rtsp.startswith('rtsp://'):
+                    return None
+                rtsp_url = fallback_rtsp
+                if not rtsp_url:
+                    return None
+                # fall through to RTSP path below
+
+            if not cam_type == 'ESP32-CAM' or rtsp_url.startswith('rtsp://'):
+                # RTSP camera — use the shared stream buffer so we don't open
+                # an extra RTSP connection (camera connection limit is ~2).
                 if not self.ffmpeg_available:
                     return None
-                
-                output_path = self.recordings_dir / f"temp_snapshot_cam_{camera_id}.jpg"
-                
-                cmd = self._build_preview_ffmpeg_input_args(rtsp_url) + [
-                    '-frames:v', '1',
-                    '-q:v', str(self.preview_quality),
-                    '-y',
-                    str(output_path)
-                ]
-                
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    timeout=15
-                )
-                
-                if result.returncode == 0 and output_path.exists():
-                    with open(output_path, 'rb') as f:
-                        data = f.read()
-                    output_path.unlink(missing_ok=True)
-                    return data
-                
-                return None
+
+                buf = _LiveStreamBuffer.get(camera_id, rtsp_url)
+                return buf.snapshot(timeout=12.0)
+
+            return None
                 
         except Exception as e:
             print(f"❌ Error capturing snapshot for camera {camera_id}: {e}")

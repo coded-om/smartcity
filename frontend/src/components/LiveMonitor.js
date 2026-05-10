@@ -103,7 +103,7 @@ function DevicePanel({ device }) {
       } catch {}
     };
     fetch();
-    const t = setInterval(fetch, 2000);
+    const t = setInterval(fetch, 5000);
     return () => clearInterval(t);
   }, [devId]);
 

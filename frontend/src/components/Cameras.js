@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FiCamera, FiPlus, FiEdit2, FiTrash2, FiEye, FiEyeOff,
   FiWifi, FiWifiOff, FiMapPin, FiRefreshCw, FiGrid, FiList,
@@ -8,55 +8,191 @@ import { apiFetch } from '../apiBase';
 import { cn } from '../lib/utils';
 import CameraModal from './CameraModal';
 
-function CameraCard({ camera, onEdit, onDelete }) {
-  const online = camera.online !== false; // default to online if not specified
-  const [snapshot, setSnapshot] = useState(null);
-  const [loadingSnap, setLoadingSnap] = useState(false);
+function LiveFeed({ camera, onDetectionMetadata }) {
+  const online = camera.online !== false;
+  const [streamError, setStreamError] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [latestDetection, setLatestDetection] = useState(null);
+  const [detectionCount, setDetectionCount] = useState(0);
+  const imgRef = useRef(null);
+  const streamUrl = `/api/cameras/${camera.id}/mjpeg?fps=5&t=${Date.now()}`;
+
+  // Reset error state when camera changes
+  useEffect(() => {
+    setStreamError(false);
+    setLoading(true);
+  }, [camera.id]);
 
   useEffect(() => {
-    if (!camera.enabled || !online) return;
+    let cancelled = false;
 
-    const loadSnapshot = async () => {
-      setLoadingSnap(true);
+    const loadLatestDetection = async () => {
       try {
-        // Try to get a test snapshot
-        const res = await apiFetch(`/cameras/${camera.id}/test`);
+        const res = await apiFetch(`/face-detections?camera_id=${camera.id}&hours=1&limit=100`);
         const data = await res.json();
-        if (data.success && data.data?.snapshot) {
-          setSnapshot(data.data.snapshot);
+        if (!cancelled && data.success && Array.isArray(data.data)) {
+          if (data.data.length > 0) {
+            setLatestDetection(data.data[0]);
+          } else {
+            setLatestDetection(null);
+          }
+          setDetectionCount(data.data.length);
+          if (onDetectionMetadata) {
+            onDetectionMetadata({
+              latestDetection: data.data[0] || null,
+              detectionCount: data.data.length,
+              detectionAge: data.data[0]?.timestamp ? Math.abs(Date.now() - new Date(`${data.data[0].timestamp} UTC`).getTime()) : null
+            });
+          }
+        } else if (!cancelled) {
+          setLatestDetection(null);
+          setDetectionCount(0);
+          if (onDetectionMetadata) onDetectionMetadata({ latestDetection: null, detectionCount: 0, detectionAge: null });
         }
-      } catch (err) {
-        console.error('Failed to load snapshot:', err);
-      } finally {
-        setLoadingSnap(false);
+      } catch (_) {
+        if (!cancelled) {
+          setLatestDetection(null);
+          setDetectionCount(0);
+          if (onDetectionMetadata) onDetectionMetadata({ latestDetection: null, detectionCount: 0, detectionAge: null });
+        }
       }
     };
 
-    loadSnapshot();
-    // Refresh snapshot every 10 seconds
-    const interval = setInterval(loadSnapshot, 10000);
-    return () => clearInterval(interval);
-  }, [camera.id, camera.enabled, online]);
+    loadLatestDetection();
+    const iv = setInterval(loadLatestDetection, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [camera.id, onDetectionMetadata]);
+
+  const detectionAgeMs = latestDetection?.timestamp
+    ? Math.abs(Date.now() - new Date(`${latestDetection.timestamp} UTC`).getTime())
+    : Number.MAX_SAFE_INTEGER;
+  const detectionFresh = detectionAgeMs <= 30000;  // 30s threshold for better visibility
+  const isKnown = Boolean(latestDetection?.person_id);
+  const isAuthorized = latestDetection?.person_authorized === 1;
+
+  if (!online || !camera.enabled) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 gap-2">
+        <FiCamera className="text-3xl" />
+        <span className="text-xs">OFFLINE</span>
+      </div>
+    );
+  }
+
+  if (streamError) {
+    // Fallback: snapshot every 3s
+    return <SnapshotFeed camera={camera} />;
+  }
+
+  return (
+    <>
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-surface-900 z-10">
+          <FiRefreshCw className="text-2xl text-slate-500 animate-spin" />
+        </div>
+      )}
+      <img
+        ref={imgRef}
+        src={streamUrl}
+        alt={camera.name}
+        className="w-full h-full object-cover"
+        onLoad={() => setLoading(false)}
+        onError={() => { setLoading(false); setStreamError(true); }}
+      />
+
+      {detectionFresh && latestDetection && (
+        <div
+          className={cn(
+            'absolute bottom-2 right-2 px-3 py-2 rounded-lg border shadow-lg backdrop-blur-sm z-20 max-w-[80%]',
+            isKnown && isAuthorized
+              ? 'bg-emerald-900/80 border-emerald-500/60 text-emerald-200'
+              : isKnown
+              ? 'bg-amber-900/80 border-amber-500/60 text-amber-200'
+              : 'bg-red-900/80 border-red-500/60 text-red-200'
+          )}
+        >
+          <p className="text-xs font-bold truncate">
+            {isKnown ? (latestDetection.person_name || 'Known Person') : 'Unknown Face'}
+          </p>
+          <p className="text-[10px] opacity-90 truncate">
+            {isKnown
+              ? `${latestDetection.person_employee_id || 'N/A'} • ${isAuthorized ? 'AUTHORIZED' : 'UNAUTHORIZED'}`
+              : 'NO MATCH'}
+          </p>
+        </div>
+      )}
+    </>
+  );
+}
+
+function SnapshotFeed({ camera }) {
+  const [snapshot, setSnapshot] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await apiFetch(`/cameras/${camera.id}/test`);
+        const data = await res.json();
+        if (!cancelled && data.success && data.data?.snapshot) {
+          setSnapshot(data.data.snapshot);
+        }
+      } catch (_) {}
+      if (!cancelled) setLoading(false);
+    };
+    load();
+    const iv = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [camera.id]);
+
+  return (
+    <>
+      {loading && !snapshot && (
+        <div className="absolute inset-0 flex items-center justify-center bg-surface-900 z-10">
+          <FiRefreshCw className="text-2xl text-slate-500 animate-spin" />
+        </div>
+      )}
+      {snapshot
+        ? <img src={snapshot} alt={camera.name} className="w-full h-full object-cover" />
+        : !loading && (
+          <div className="flex flex-col items-center justify-center w-full h-full gap-2 text-slate-600">
+            <FiCamera className="text-3xl" />
+          </div>
+        )
+      }
+    </>
+  );
+}
+
+function CameraCard({ camera, onEdit, onDelete }) {
+  const online = camera.online !== false;
+  const [detectionMeta, setDetectionMeta] = useState({
+    latestDetection: null,
+    detectionCount: 0,
+    detectionAge: null
+  });
+
+  const isKnown = Boolean(detectionMeta.latestDetection?.person_id);
+  const isAuthorized = detectionMeta.latestDetection?.person_authorized === 1;
+  const detectionFresh = detectionMeta.detectionAge && detectionMeta.detectionAge <= 30000;
+  const hasRecentDetection = detectionFresh && detectionMeta.latestDetection;
 
   return (
     <div className={cn(
-      'bg-surface-800 rounded-xl border transition-all overflow-hidden',
+      'bg-surface-800 rounded-xl border transition-all overflow-hidden flex flex-col',
       online ? 'border-surface-600 hover:border-primary-700' : 'border-red-900/50'
     )}>
-      {/* Snapshot preview */}
-      <div className="relative h-40 bg-surface-900 flex items-center justify-center">
-        {snapshot ? (
-          <img src={snapshot} alt={camera.name} className="w-full h-full object-cover" />
-        ) : (
-          <div className="text-slate-600 flex flex-col items-center gap-2">
-            <FiCamera className="text-3xl" />
-            {loadingSnap && <FiRefreshCw className="text-sm animate-spin" />}
-          </div>
-        )}
+      {/* Live video feed */}
+      <div className="relative h-48 bg-surface-900 flex items-center justify-center overflow-hidden">
+        <LiveFeed camera={camera} onDetectionMetadata={setDetectionMeta} />
         
-        {/* Status indicator */}
+        {/* Status indicator - top left */}
         <div className={cn(
-          'absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-bold border',
+          'absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-bold border z-20',
           online 
             ? 'bg-emerald-900/80 text-emerald-300 border-emerald-500/50' 
             : 'bg-red-900/80 text-red-300 border-red-500/50'
@@ -65,22 +201,26 @@ function CameraCard({ camera, onEdit, onDelete }) {
           {online ? 'LIVE' : 'OFFLINE'}
         </div>
 
-        {/* Type badge */}
-        <div className="absolute top-2 right-2 px-2 py-1 rounded-full text-xs font-bold bg-surface-900/80 text-slate-300 border border-surface-600">
-          {camera.type || 'RTSP'}
+        {/* FR Status Badge - top right */}
+        <div className={cn(
+          'absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold border z-20 transition-all',
+          camera.face_recognition_enabled
+            ? hasRecentDetection && isKnown && isAuthorized
+              ? 'bg-emerald-900/80 text-emerald-300 border-emerald-500/50'
+              : hasRecentDetection && isKnown
+              ? 'bg-amber-900/80 text-amber-300 border-amber-500/50'
+              : hasRecentDetection
+              ? 'bg-red-900/80 text-red-300 border-red-500/50'
+              : 'bg-blue-900/80 text-blue-300 border-blue-500/50'
+            : 'bg-slate-900/80 text-slate-400 border-slate-600/50'
+        )}>
+          <BsShieldCheck className="text-[10px]" />
+          {camera.face_recognition_enabled ? 'FR ON' : 'FR OFF'}
         </div>
-
-        {/* FR badge */}
-        {camera.face_recognition_enabled && (
-          <div className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-blue-900/80 text-blue-300 border border-blue-500/50">
-            <BsShieldCheck className="text-[10px]" />
-            FR
-          </div>
-        )}
 
         {/* Disabled overlay */}
         {!camera.enabled && (
-          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-20">
             <div className="flex items-center gap-2 text-slate-400">
               <FiEyeOff />
               <span className="text-sm font-bold">DISABLED</span>
@@ -90,27 +230,68 @@ function CameraCard({ camera, onEdit, onDelete }) {
       </div>
 
       {/* Card content */}
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="flex-1 min-w-0">
-            <h3 className={cn(
-              'font-semibold text-sm truncate',
-              camera.enabled ? 'text-white' : 'text-slate-500'
-            )}>
-              {camera.name}
-            </h3>
-            {camera.location && (
-              <p className="text-slate-500 text-xs mt-0.5 flex items-center gap-1 truncate">
-                <FiMapPin className="shrink-0 text-[10px]" />
-                {camera.location}
-              </p>
+      <div className="p-4 flex flex-col flex-1">
+        {/* Title & Location */}
+        <div className="mb-3">
+          <h3 className={cn(
+            'font-semibold text-sm truncate',
+            camera.enabled ? 'text-white' : 'text-slate-500'
+          )}>
+            {camera.name}
+          </h3>
+          {camera.location && (
+            <p className="text-slate-500 text-xs mt-0.5 flex items-center gap-1 truncate">
+              <FiMapPin className="shrink-0 text-[10px]" />
+              {camera.location}
+            </p>
+          )}
+        </div>
+
+        {/* Detection Statistics - New */}
+        {camera.face_recognition_enabled && (
+          <div className="mb-3 p-2.5 bg-surface-700/50 rounded-lg border border-surface-600">
+            <div className="grid grid-cols-2 gap-2">
+              {/* Detection Count */}
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide">Detections</p>
+                <p className="text-sm font-bold text-white">{detectionMeta.detectionCount}</p>
+              </div>
+              {/* Last Detection */}
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide">Last Detection</p>
+                {hasRecentDetection ? (
+                  <p className="text-sm font-bold text-emerald-300">
+                    {Math.round(detectionMeta.detectionAge / 1000)}s ago
+                  </p>
+                ) : (
+                  <p className="text-sm font-bold text-slate-400">—</p>
+                )}
+              </div>
+            </div>
+
+            {/* Person Info - if recent detection */}
+            {hasRecentDetection && detectionMeta.latestDetection && (
+              <div className="mt-2 pt-2 border-t border-surface-600">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Current Face</p>
+                <p className="text-xs font-semibold text-white truncate">
+                  {isKnown ? detectionMeta.latestDetection.person_name : '👤 Unknown'}
+                </p>
+                {isKnown && (
+                  <p className={cn(
+                    'text-[10px] font-medium mt-0.5',
+                    isAuthorized ? 'text-emerald-400' : 'text-amber-400'
+                  )}>
+                    {isAuthorized ? '✓ AUTHORIZED' : '⚠ UNAUTHORIZED'}
+                  </p>
+                )}
+              </div>
             )}
           </div>
-        </div>
+        )}
 
         {/* Device association */}
         {camera.device_id && (
-          <div className="mt-2 px-2 py-1 rounded bg-surface-900 border border-surface-600 text-xs text-slate-400">
+          <div className="mt-auto pt-2 px-2 py-1 rounded bg-surface-900 border border-surface-600 text-xs text-slate-400">
             Device: <span className="text-slate-300 font-medium">{camera.device_id}</span>
           </div>
         )}

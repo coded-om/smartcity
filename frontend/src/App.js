@@ -14,7 +14,7 @@ import Settings     from './components/Settings';
 import { apiFetch } from './apiBase';
 import './App.css';
 
-const POLL_MS = 3000;
+const POLL_MS = 8000;
 
 function fetchWithSignal(path, signal) {
   return apiFetch(path, { signal });

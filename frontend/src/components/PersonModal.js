@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FiX, FiUpload, FiCheckCircle, FiAlertCircle, FiLoader, FiUser } from 'react-icons/fi';
-import { apiFetch } from '../apiBase';
+import { apiFetch, getPersonPhotoUrl } from '../apiBase';
 import { cn } from '../lib/utils';
 
 export default function PersonModal({ person, onClose, onSave }) {
@@ -34,7 +34,7 @@ export default function PersonModal({ person, onClose, onSave }) {
       });
       // Load existing photo if available
       if (person.id) {
-        setPhotoPreview(`http://localhost:5000/api/persons/${person.id}/photo`);
+        setPhotoPreview(getPersonPhotoUrl(person.id));
       }
     }
   }, [person]);

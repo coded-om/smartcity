@@ -3,7 +3,7 @@ import {
   FiSettings, FiCamera, FiUsers, FiBell, FiPlus, FiEdit2, FiTrash2,
   FiRefreshCw, FiSearch, FiUser,
 } from 'react-icons/fi';
-import { apiFetch } from '../apiBase';
+import { apiFetch, getPersonPhotoUrl } from '../apiBase';
 import { cn } from '../lib/utils';
 import Cameras from './Cameras';
 import PersonModal from './PersonModal';
@@ -181,7 +181,7 @@ function PersonManagementTab() {
                       <div className="w-12 h-12 rounded-lg bg-surface-900 border border-surface-600 overflow-hidden flex items-center justify-center">
                         {person.photo_path ? (
                           <img
-                            src={`http://localhost:5000/api/persons/${person.id}/photo`}
+                            src={getPersonPhotoUrl(person.id)}
                             alt={person.name}
                             className="w-full h-full object-cover"
                             onError={(e) => {
