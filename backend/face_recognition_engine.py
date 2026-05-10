@@ -15,6 +15,7 @@ Features:
 Uses face_recognition library (dlib-based) for high accuracy.
 """
 
+import json
 import os
 import pickle
 import sqlite3
@@ -27,6 +28,15 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
+
+# OpenCV is used for local face analysis / green-box overlays.
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except Exception as e:
+    print(f"⚠️  OpenCV not available: {e}")
+    cv2 = None
+    CV2_AVAILABLE = False
 
 # Try to import face_recognition - gracefully handle if not available
 try:
@@ -58,6 +68,13 @@ DETECTIONS_DIR = DATA_DIR / 'detections'
 FACE_MATCH_THRESHOLD = 0.6  # Lower = stricter matching (range 0.0-1.0)
 FACE_DETECTION_MODEL = 'hog'  # 'hog' (fast, CPU) or 'cnn' (accurate, GPU)
 
+# Local face analysis mode.
+# 'auto'  = use face_recognition (dlib) if installed, else fallback to OpenCV
+# 'opencv'/'local'/'haar' = force OpenCV Haar cascade
+# 'face_recognition' = force dlib (fails if not installed)
+FACE_RECOGNITION_MODE = os.getenv('FACE_RECOGNITION_MODE', 'auto').strip().lower()
+_HAAR_CASCADE = None
+
 # Cloud provider configuration (Luxand)
 FACE_RECOGNITION_PROVIDER = os.getenv('FACE_RECOGNITION_PROVIDER', '').strip().lower()
 LUXAND_API_URL = os.getenv('LUXAND_API_URL', 'https://api.luxand.cloud').rstrip('/')
@@ -82,6 +99,28 @@ def _cloud_provider_enabled() -> bool:
 
 def _cloud_recognition_active() -> bool:
     """True if either local or cloud recognition can run."""
+    return FACE_RECOGNITION_AVAILABLE or _cloud_provider_enabled()
+
+
+def _local_analysis_active() -> bool:
+    """True when local OpenCV (Haar) analysis should be used.
+    In 'auto' mode we prefer face_recognition (dlib) when available."""
+    opencv_modes = ('opencv', 'local', 'haar')
+    if FACE_RECOGNITION_MODE in opencv_modes:
+        return CV2_AVAILABLE
+    if FACE_RECOGNITION_MODE == 'auto':
+        # Prefer dlib when installed; only fall back to OpenCV if dlib missing
+        return not FACE_RECOGNITION_AVAILABLE and CV2_AVAILABLE
+    return False
+
+
+def face_analysis_active() -> bool:
+    """Public helper used by the Flask app to decide whether camera analysis should start."""
+    return _local_analysis_active() or FACE_RECOGNITION_AVAILABLE or _cloud_provider_enabled()
+
+
+def identity_analytics_active() -> bool:
+    """Whether identity-style face analytics (person matching / clustering) are available."""
     return FACE_RECOGNITION_AVAILABLE or _cloud_provider_enabled()
 
 
@@ -239,10 +278,140 @@ def _luxand_search_photo(photo_path: str) -> List[dict]:
     raise RuntimeError(str(last_error) if last_error else 'Unknown cloud search error')
 
 
+def _get_haar_cascade():
+    """Lazy-load the Haar cascade used for local face detection."""
+    global _HAAR_CASCADE
+    if not CV2_AVAILABLE:
+        return None
+    if _HAAR_CASCADE is None:
+        cascade_path = Path(cv2.data.haarcascades) / 'haarcascade_frontalface_default.xml'
+        _HAAR_CASCADE = cv2.CascadeClassifier(str(cascade_path))
+        if _HAAR_CASCADE.empty():
+            raise RuntimeError(f"Failed to load Haar cascade from {cascade_path}")
+    return _HAAR_CASCADE
+
+
+def _normalize_bbox(left: int, top: int, right: int, bottom: int, width: int, height: int) -> dict:
+    """Convert absolute bbox coordinates to normalized 0..1 values for the UI overlay."""
+    if width <= 0 or height <= 0:
+        return {
+            'left': 0.0,
+            'top': 0.0,
+            'right': 0.0,
+            'bottom': 0.0,
+        }
+
+    return {
+        'left': round(max(0, left) / width, 4),
+        'top': round(max(0, top) / height, 4),
+        'right': round(min(width, right) / width, 4),
+        'bottom': round(min(height, bottom) / height, 4),
+    }
+
+
+def _process_camera_frame_local(camera_id: int, frame_path: str) -> List[dict]:
+    """Detect faces locally with OpenCV and persist bbox metadata for the UI overlay."""
+    if not CV2_AVAILABLE:
+        return []
+
+    image = cv2.imread(frame_path)
+    if image is None:
+        raise RuntimeError(f"Unable to read frame image: {frame_path}")
+
+    height, width = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.equalizeHist(gray)
+
+    cascade = _get_haar_cascade()
+    if cascade is None:
+        return []
+
+    faces = cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(40, 40),
+    )
+
+    if len(faces) == 0:
+        return []
+
+    camera_detections_dir = DETECTIONS_DIR / f"cam_{camera_id}"
+    camera_detections_dir.mkdir(parents=True, exist_ok=True)
+
+    annotated = image.copy()
+    boxes = []
+    for (x, y, w, h) in faces:
+        left, top, right, bottom = int(x), int(y), int(x + w), int(y + h)
+        boxes.append(_normalize_bbox(left, top, right, bottom, width, height))
+
+        # Draw a bold green box so the overlay image mirrors the UI highlight style.
+        cv2.rectangle(annotated, (left, top), (right, bottom), (0, 255, 0), 3)
+        label_y = max(22, top - 10)
+        cv2.rectangle(annotated, (left, label_y - 18), (left + 150, label_y + 4), (0, 128, 0), -1)
+        cv2.putText(
+            annotated,
+            'FACE DETECTED',
+            (left + 8, label_y - 4),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+    timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+    snapshot_filename = f"face_{timestamp_str}.jpg"
+    snapshot_path = camera_detections_dir / snapshot_filename
+    cv2.imwrite(str(snapshot_path), annotated)
+
+    detection = {
+        'person_id': None,
+        'person_name': None,
+        'confidence': 0.99,
+        'bbox': boxes[0] if len(boxes) == 1 else boxes,
+        'bbox_json': json.dumps(boxes),
+        'snapshot_path': str(snapshot_path),
+        'analysis_method': 'opencv',
+        'analysis_label': 'Face detected',
+        'face_count': len(boxes),
+        'frame_width': width,
+        'frame_height': height,
+    }
+
+    conn = get_db()
+    try:
+        conn.execute(
+            """INSERT INTO face_detections
+               (camera_id, person_id, confidence, snapshot_path, bbox_json,
+                frame_width, frame_height, analysis_method, face_count, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (
+                camera_id,
+                detection['person_id'],
+                detection['confidence'],
+                detection['snapshot_path'],
+                detection['bbox_json'],
+                detection['frame_width'],
+                detection['frame_height'],
+                detection['analysis_method'],
+                detection['face_count'],
+            )
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return [detection]
+
+
 def get_db():
     """Get database connection"""
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
@@ -376,6 +545,22 @@ def register_person(name: str, employee_id: str, photo_file,
             with open(photo_path, 'wb') as f:
                 f.write(photo_file.read())
         
+        if _local_analysis_active():
+            # Local OpenCV mode stores the photo for reference; no identity encoding is generated.
+            conn.execute(
+                """UPDATE persons
+                   SET photo_path=?, face_encoding_path=NULL, cloud_subject=NULL, updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (str(photo_path), person_id)
+            )
+            conn.commit()
+            conn.close()
+            print(
+                f"✅ Registered person for local analysis: {name} "
+                f"(ID: {employee_id}, person_id: {person_id})"
+            )
+            return True, f"Successfully registered {name} (local analysis enabled)", person_id
+
         if not FACE_RECOGNITION_AVAILABLE and _cloud_provider_enabled():
             # Cloud flow: enroll with cloud provider and store cloud identifier.
             cloud_subject = employee_id
@@ -560,74 +745,123 @@ def process_camera_frame(camera_id: int, frame_path: str) -> List[dict]:
     """
     detections = []
 
+    if _local_analysis_active():
+        return _process_camera_frame_local(camera_id, frame_path)
+
     if not FACE_RECOGNITION_AVAILABLE:
         if _cloud_provider_enabled():
             return _process_camera_frame_cloud(camera_id, frame_path)
         return []
     
     try:
-        # Load image
+        # Load image at full resolution
         image = face_recognition.load_image_file(frame_path)
+        orig_height, orig_width = image.shape[:2]
+
+        # ── Speed optimisation: halve resolution for detection only ──────────
+        # Running face_locations on a 50%-scale image is ~4× faster on CPU.
+        # All returned pixel coords are scaled back before normalisation.
+        small = image[::2, ::2]   # stride-2 slice — no extra memory copy
+        SCALE = 2                 # factor to multiply coords back up
+
+        # Detect face locations on the downscaled image
+        face_locations_small = face_recognition.face_locations(small, model=FACE_DETECTION_MODEL)
         
-        # Detect face locations
-        face_locations = face_recognition.face_locations(image, model=FACE_DETECTION_MODEL)
-        
-        if len(face_locations) == 0:
+        if len(face_locations_small) == 0:
             return []  # No faces detected
-        
-        # Extract encodings
+
+        # Scale locations back to original resolution
+        face_locations = [
+            (top * SCALE, right * SCALE, bottom * SCALE, left * SCALE)
+            for (top, right, bottom, left) in face_locations_small
+        ]
+
+        # Extract encodings from full-res image at the corrected locations
         encodings = face_recognition.face_encodings(image, face_locations)
-        
+
+        # Build normalised bbox list for the UI canvas overlay
+        boxes = [
+            _normalize_bbox(left, top, right, bottom, orig_width, orig_height)
+            for (top, right, bottom, left) in face_locations
+        ]
+        bbox_json = json.dumps(boxes)
+
         # Create detection directory for this camera
         camera_detections_dir = DETECTIONS_DIR / f"cam_{camera_id}"
         camera_detections_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        # Batch-query persons to avoid N DB round-trips
+        person_cache: Dict[int, dict] = {}
+
         # Process each detected face
         for i, (encoding, bbox) in enumerate(zip(encodings, face_locations)):
-            # Match face
+            # Match face against known encodings
             person_id, confidence = match_face(encoding)
-            
-            # Crop face from image
+
+            # Crop face from full-res image for snapshot
             top, right, bottom, left = bbox
-            face_image = image[top:bottom, left:right]
+            face_image = image[max(0, top):bottom, max(0, left):right]
             pil_image = Image.fromarray(face_image)
-            
+
             # Save cropped face
-            timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+            timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
             snapshot_filename = f"face_{timestamp_str}_{i}.jpg"
             snapshot_path = camera_detections_dir / snapshot_filename
-            pil_image.save(str(snapshot_path))
-            
-            # Get person name if matched
-            person_name = None
+            pil_image.save(str(snapshot_path), quality=85)
+
+            # Fetch person metadata (name, employee_id, authorized, role)
+            person_info: dict = {}
             if person_id:
-                conn = get_db()
-                person = conn.execute(
-                    "SELECT name FROM persons WHERE id=?", (person_id,)
-                ).fetchone()
-                conn.close()
-                person_name = person['name'] if person else None
-            
+                if person_id not in person_cache:
+                    conn = get_db()
+                    row = conn.execute(
+                        "SELECT name, employee_id, role, department, authorized FROM persons WHERE id=?",
+                        (person_id,)
+                    ).fetchone()
+                    conn.close()
+                    person_cache[person_id] = dict(row) if row else {}
+                person_info = person_cache.get(person_id, {})
+
             detections.append({
                 'person_id': person_id,
-                'person_name': person_name,
+                'person_name': person_info.get('name'),
+                'person_employee_id': person_info.get('employee_id'),
+                'person_role': person_info.get('role'),
+                'person_department': person_info.get('department'),
+                'person_authorized': person_info.get('authorized'),
                 'confidence': confidence,
                 'bbox': bbox,
-                'snapshot_path': str(snapshot_path)
+                'bbox_json': bbox_json,
+                'frame_width': orig_width,
+                'frame_height': orig_height,
+                'analysis_method': 'face_recognition',
+                'face_count': len(face_locations),
+                'snapshot_path': str(snapshot_path),
             })
-        
-        # Log detections to database
+
+        # Log all detections to database in one transaction
         conn = get_db()
         for det in detections:
             conn.execute(
                 """INSERT INTO face_detections 
-                   (camera_id, person_id, confidence, snapshot_path, timestamp)
-                   VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
-                (camera_id, det['person_id'], det['confidence'], det['snapshot_path'])
+                   (camera_id, person_id, confidence, snapshot_path, bbox_json,
+                    frame_width, frame_height, analysis_method, face_count, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                (
+                    camera_id,
+                    det['person_id'],
+                    det['confidence'],
+                    det['snapshot_path'],
+                    det['bbox_json'],
+                    det['frame_width'],
+                    det['frame_height'],
+                    det['analysis_method'],
+                    det['face_count'],
+                )
             )
         conn.commit()
         conn.close()
-        
+
         return detections
         
     except Exception as e:
@@ -666,15 +900,17 @@ def _process_camera_frame_cloud(camera_id: int, frame_path: str) -> List[dict]:
                 'bbox': None,
                 'snapshot_path': str(snapshot_path),
                 'cloud_label': label,
+                'analysis_method': 'cloud',
+                'face_count': 1,
             })
 
         conn = get_db()
         for det in detections:
             conn.execute(
                 """INSERT INTO face_detections
-                   (camera_id, person_id, confidence, snapshot_path, timestamp)
-                   VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
-                (camera_id, det['person_id'], det['confidence'], det['snapshot_path'])
+                   (camera_id, person_id, confidence, snapshot_path, analysis_method, face_count, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                (camera_id, det['person_id'], det['confidence'], det['snapshot_path'], det.get('analysis_method'), det.get('face_count', 1))
             )
         conn.commit()
         conn.close()
@@ -707,7 +943,10 @@ def start_face_recognition_loop(camera_id: int, interval: int = 5):
     
     def recognition_loop():
         """Background thread function"""
-        print(f"🔍 Started face recognition for camera {camera_id} (interval: {interval}s)")
+        if _local_analysis_active():
+            print(f"🔍 Started local face analysis for camera {camera_id} (interval: {interval}s)")
+        else:
+            print(f"🔍 Started face recognition for camera {camera_id} (interval: {interval}s)")
         
         # Import here to avoid circular dependency
         try:
@@ -716,6 +955,12 @@ def start_face_recognition_loop(camera_id: int, interval: int = 5):
         except Exception as e:
             print(f"❌ Cannot start face recognition for camera {camera_id}: {e}")
             return
+
+        # Import object detector (graceful — will no-op if ultralytics missing)
+        try:
+            from object_detector import detect_objects as _detect_objects
+        except Exception:
+            _detect_objects = None
         
         while not stop_flag.is_set():
             try:
@@ -742,15 +987,50 @@ def start_face_recognition_loop(camera_id: int, interval: int = 5):
                     
                     # Process frame
                     detections = process_camera_frame(camera_id, str(temp_frame_path))
+
+                    # ── Object detection on the same frame ───────────────
+                    if _detect_objects is not None:
+                        try:
+                            obj_results = _detect_objects(str(temp_frame_path))
+                            if obj_results:
+                                conn = get_db()
+                                for obj in obj_results:
+                                    conn.execute(
+                                        """INSERT INTO object_detections
+                                           (camera_id, class_name, confidence, bbox_json,
+                                            frame_width, frame_height, timestamp)
+                                           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                                        (
+                                            camera_id,
+                                            obj['class_name'],
+                                            obj['confidence'],
+                                            obj['bbox_json'],
+                                            obj.get('frame_width'),
+                                            obj.get('frame_height'),
+                                        )
+                                    )
+                                    print(f"📦 Object detected: {obj['class_name']} "
+                                          f"({obj['confidence']:.0%}) cam={camera_id}")
+                                conn.commit()
+                                conn.close()
+                        except Exception as _oe:
+                            print(f"⚠️  Object detection error cam {camera_id}: {_oe}")
                     
                     # Handle unknown faces (trigger alerts)
                     for det in detections:
+                        if det.get('analysis_method') == 'opencv':
+                            print(
+                                f"🟩 Local face detected on camera {camera_id} "
+                                f"({det.get('face_count', 1)} face(s))"
+                            )
+                            continue
                         if det['person_id'] is None:
                             # Unknown face detected - trigger alert
                             _trigger_unknown_face_alert(camera_id, camera['name'], det)
                         else:
                             # Known person detected
-                            print(f"✓ Detected: {det['person_name']} (confidence: {det['confidence']:.2f})")
+                            auth = "✓ AUTHORIZED" if det.get('person_authorized') else "✗ UNAUTHORIZED"
+                            print(f"👤 Detected: {det['person_name']} [{auth}] confidence={det['confidence']:.2f}")
                     
                     # Clean up temp file
                     temp_frame_path.unlink(missing_ok=True)

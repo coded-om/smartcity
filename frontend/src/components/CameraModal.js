@@ -332,8 +332,8 @@ export default function CameraModal({ camera, onClose, onSave }) {
 
             <label className="flex items-center justify-between p-3 rounded-lg bg-surface-900 border border-surface-600 cursor-pointer hover:border-primary-700 transition-colors">
               <div>
-                <p className="text-sm font-medium text-white">Face Recognition</p>
-                <p className="text-xs text-slate-500">Enable face detection and identification</p>
+                <p className="text-sm font-medium text-white">Local Face Analysis</p>
+                <p className="text-xs text-slate-500">Enable OpenCV face detection with green-box overlays</p>
               </div>
               <input
                 type="checkbox"

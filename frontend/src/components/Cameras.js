@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  FiCamera, FiPlus, FiEdit2, FiTrash2, FiEye, FiEyeOff,
+  FiCamera, FiPlus, FiEdit2, FiTrash2, FiEyeOff,
   FiWifi, FiWifiOff, FiMapPin, FiRefreshCw, FiGrid, FiList,
 } from 'react-icons/fi';
 import { BsShieldCheck } from 'react-icons/bs';
@@ -8,19 +8,63 @@ import { apiFetch } from '../apiBase';
 import { cn } from '../lib/utils';
 import CameraModal from './CameraModal';
 
+function parseBBoxList(rawValue) {
+  if (!rawValue) return [];
+
+  try {
+    const parsed = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+
+    return list
+      .filter(Boolean)
+      .map((box) => {
+        const left = Number(box.left ?? box.x ?? 0);
+        const top = Number(box.top ?? box.y ?? 0);
+        const right = Number(box.right ?? (box.x != null && box.width != null ? Number(box.x) + Number(box.width) : 0));
+        const bottom = Number(box.bottom ?? (box.y != null && box.height != null ? Number(box.y) + Number(box.height) : 0));
+        return { left, top, right, bottom };
+      })
+      .filter((box) => [box.left, box.top, box.right, box.bottom].every(Number.isFinite));
+  } catch (_) {
+    return [];
+  }
+}
+
+function parseDbTimestamp(timestamp) {
+  if (!timestamp) return null;
+
+  const normalized = String(timestamp).trim();
+  const isoLike = normalized.includes('T') ? normalized : normalized.replace(' ', 'T');
+  const candidates = [
+    new Date(isoLike.endsWith('Z') ? isoLike : `${isoLike}Z`),
+    new Date(`${normalized} UTC`),
+  ];
+
+  for (const candidate of candidates) {
+    const ms = candidate.getTime();
+    if (!Number.isNaN(ms)) return ms;
+  }
+
+  return null;
+}
+
 function LiveFeed({ camera, onDetectionMetadata }) {
   const online = camera.online !== false;
   const [streamError, setStreamError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [latestDetection, setLatestDetection] = useState(null);
-  const [detectionCount, setDetectionCount] = useState(0);
+  const [overlayBoxes, setOverlayBoxes] = useState([]);
+  const [objectBoxes, setObjectBoxes] = useState([]);
   const imgRef = useRef(null);
-  const streamUrl = `/api/cameras/${camera.id}/mjpeg?fps=5&t=${Date.now()}`;
+  const canvasRef = useRef(null);
+  const streamNonceRef = useRef(Date.now());
+  const streamUrl = `/api/cameras/${camera.id}/mjpeg?fps=5&t=${streamNonceRef.current}`;
 
   // Reset error state when camera changes
   useEffect(() => {
     setStreamError(false);
     setLoading(true);
+    streamNonceRef.current = Date.now();
   }, [camera.id]);
 
   useEffect(() => {
@@ -31,47 +75,250 @@ function LiveFeed({ camera, onDetectionMetadata }) {
         const res = await apiFetch(`/face-detections?camera_id=${camera.id}&hours=1&limit=100`);
         const data = await res.json();
         if (!cancelled && data.success && Array.isArray(data.data)) {
-          if (data.data.length > 0) {
-            setLatestDetection(data.data[0]);
-          } else {
-            setLatestDetection(null);
-          }
-          setDetectionCount(data.data.length);
+          const latest = data.data[0] || null;
+          const boxes = parseBBoxList(latest?.bbox_json);
+          setLatestDetection(data.data.length > 0 ? latest : null);
+          setOverlayBoxes(boxes);
           if (onDetectionMetadata) {
             onDetectionMetadata({
-              latestDetection: data.data[0] || null,
+              latestDetection: latest,
               detectionCount: data.data.length,
-              detectionAge: data.data[0]?.timestamp ? Math.abs(Date.now() - new Date(`${data.data[0].timestamp} UTC`).getTime()) : null
+              detectionAge: latest?.timestamp ? Math.abs(Date.now() - parseDbTimestamp(latest.timestamp)) : null,
+              overlayBoxes: boxes,
+              analysisMethod: latest?.analysis_method || 'opencv',
+              faceCount: latest?.face_count || boxes.length,
             });
           }
         } else if (!cancelled) {
           setLatestDetection(null);
-          setDetectionCount(0);
-          if (onDetectionMetadata) onDetectionMetadata({ latestDetection: null, detectionCount: 0, detectionAge: null });
+          setOverlayBoxes([]);
+          if (onDetectionMetadata) onDetectionMetadata({ latestDetection: null, detectionCount: 0, detectionAge: null, overlayBoxes: [], analysisMethod: 'opencv', faceCount: 0 });
         }
       } catch (_) {
         if (!cancelled) {
           setLatestDetection(null);
-          setDetectionCount(0);
-          if (onDetectionMetadata) onDetectionMetadata({ latestDetection: null, detectionCount: 0, detectionAge: null });
+          setOverlayBoxes([]);
+          if (onDetectionMetadata) onDetectionMetadata({ latestDetection: null, detectionCount: 0, detectionAge: null, overlayBoxes: [], analysisMethod: 'opencv', faceCount: 0 });
         }
       }
     };
 
     loadLatestDetection();
     const iv = setInterval(loadLatestDetection, 5000);
+
+    // Object detection polling (independent)
+    let objCancelled = false;
+    const loadObjects = async () => {
+      try {
+        const res = await apiFetch(`/cameras/${camera.id}/object-detections?hours=0.1`);
+        const data = await res.json();
+        if (!objCancelled && data.success && Array.isArray(data.data)) {
+          setObjectBoxes(data.data.map(d => ({
+            ...parseBBoxList(d.bbox_json)[0],
+            class_name: d.class_name,
+            confidence: d.confidence,
+            timestamp: d.timestamp,
+          })).filter(b => b && b.left != null));
+        }
+      } catch (_) {}
+    };
+    loadObjects();
+    const objIv = setInterval(loadObjects, 5000);
+
     return () => {
       cancelled = true;
       clearInterval(iv);
+      objCancelled = true;
+      clearInterval(objIv);
     };
   }, [camera.id, onDetectionMetadata]);
 
   const detectionAgeMs = latestDetection?.timestamp
-    ? Math.abs(Date.now() - new Date(`${latestDetection.timestamp} UTC`).getTime())
+    ? Math.abs(Date.now() - parseDbTimestamp(latestDetection.timestamp))
     : Number.MAX_SAFE_INTEGER;
-  const detectionFresh = detectionAgeMs <= 30000;  // 30s threshold for better visibility
+  const detectionFresh = detectionAgeMs <= 120000;  // 2m threshold so the overlay stays visible on the Pi
+  const faceCount = latestDetection?.face_count || overlayBoxes.length;
   const isKnown = Boolean(latestDetection?.person_id);
   const isAuthorized = latestDetection?.person_authorized === 1;
+  const analysisMethod = latestDetection?.analysis_method || 'opencv';
+
+  const redrawOverlay = useCallback(() => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img || !img.complete || !img.naturalWidth || !img.naturalHeight) return;
+
+    const rect = img.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const sourceWidth = latestDetection?.frame_width || img.naturalWidth;
+    const sourceHeight = latestDetection?.frame_height || img.naturalHeight;
+    const sourceAspect = sourceWidth / sourceHeight;
+    const containerAspect = rect.width / rect.height;
+    let renderWidth = rect.width;
+    let renderHeight = rect.height;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (containerAspect > sourceAspect) {
+      renderHeight = rect.height;
+      renderWidth = renderHeight * sourceAspect;
+      offsetX = (rect.width - renderWidth) / 2;
+    } else {
+      renderWidth = rect.width;
+      renderHeight = renderWidth / sourceAspect;
+      offsetY = (rect.height - renderHeight) / 2;
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = `${rect.height}px`;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    const toCanvas = (box) => ({
+      x: offsetX + Math.max(0, Math.min(1, box.left)) * renderWidth,
+      y: offsetY + Math.max(0, Math.min(1, box.top)) * renderHeight,
+      w: Math.max(0, Math.min(1, box.right - box.left)) * renderWidth,
+      h: Math.max(0, Math.min(1, box.bottom - box.top)) * renderHeight,
+    });
+
+    // ── Face detection boxes ──────────────────────────────────────────────
+    if (detectionFresh && overlayBoxes.length > 0) {
+      const isFR = analysisMethod === 'face_recognition';
+      overlayBoxes.forEach((box, index) => {
+        const { x, y, w, h } = toCanvas(box);
+
+        // Determine colour: green=authorized, amber=unauthorized, red=unknown, cyan=opencv
+        let strokeColor, shadowColor, labelBg, labelText;
+        if (!isFR) {
+          strokeColor = '#22c55e'; shadowColor = 'rgba(34,197,94,0.85)';
+          labelBg = 'rgba(5,46,22,0.88)'; labelText = '#bbf7d0';
+        } else if (!isKnown) {
+          strokeColor = '#ef4444'; shadowColor = 'rgba(239,68,68,0.85)';
+          labelBg = 'rgba(69,10,10,0.9)'; labelText = '#fecaca';
+        } else if (isAuthorized) {
+          strokeColor = '#22c55e'; shadowColor = 'rgba(34,197,94,0.85)';
+          labelBg = 'rgba(5,46,22,0.88)'; labelText = '#bbf7d0';
+        } else {
+          strokeColor = '#f59e0b'; shadowColor = 'rgba(245,158,11,0.85)';
+          labelBg = 'rgba(69,26,3,0.9)'; labelText = '#fde68a';
+        }
+
+        ctx.save();
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 3;
+        ctx.shadowColor = shadowColor;
+        ctx.shadowBlur = 10;
+        ctx.strokeRect(x, y, w, h);
+        ctx.shadowBlur = 0;
+
+        // Build label text
+        let topLabel, subLabel;
+        if (!isFR) {
+          topLabel = `FACE ${index + 1}`;
+          subLabel = null;
+        } else if (!isKnown) {
+          topLabel = 'UNKNOWN';
+          subLabel = 'No match in DB';
+        } else {
+          topLabel = latestDetection?.person_name || 'Known';
+          const pct = latestDetection?.confidence != null
+            ? ` ${Math.round(latestDetection.confidence * 100)}%` : '';
+          subLabel = `${isAuthorized ? '✓ AUTH' : '✗ UNAUTH'}${pct}`;
+        }
+
+        ctx.font = '700 12px Inter, system-ui, sans-serif';
+        const textW = Math.max(
+          ctx.measureText(topLabel).width,
+          subLabel ? ctx.measureText(subLabel).width : 0
+        );
+        const labelH = subLabel ? 34 : 20;
+        const labelW = textW + 18;
+        const labelX = x;
+        const labelY = Math.max(4, y - labelH - 2);
+
+        ctx.fillStyle = labelBg;
+        ctx.fillRect(labelX, labelY, labelW, labelH);
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(labelX, labelY, labelW, labelH);
+
+        ctx.fillStyle = labelText;
+        ctx.font = '700 12px Inter, system-ui, sans-serif';
+        ctx.fillText(topLabel, labelX + 8, labelY + 14);
+        if (subLabel) {
+          ctx.font = '500 10px Inter, system-ui, sans-serif';
+          ctx.fillStyle = labelText;
+          ctx.globalAlpha = 0.85;
+          ctx.fillText(subLabel, labelX + 8, labelY + 28);
+          ctx.globalAlpha = 1;
+        }
+        ctx.restore();
+      });
+    }
+
+    // ── Object detection boxes ────────────────────────────────────────────
+    const OBJ_AGE_LIMIT = 120000;
+    const freshObjects = objectBoxes.filter(ob => {
+      const age = Math.abs(Date.now() - (parseDbTimestamp(ob.timestamp) || 0));
+      return age <= OBJ_AGE_LIMIT && ob.left != null;
+    });
+
+    const OBJ_COLORS = {
+      'cell phone': { stroke: '#f97316', shadow: 'rgba(249,115,22,0.85)', bg: 'rgba(67,20,7,0.9)', text: '#fed7aa' },
+      'knife':      { stroke: '#ef4444', shadow: 'rgba(239,68,68,0.85)',  bg: 'rgba(69,10,10,0.9)', text: '#fecaca' },
+      'scissors':   { stroke: '#ef4444', shadow: 'rgba(239,68,68,0.85)',  bg: 'rgba(69,10,10,0.9)', text: '#fecaca' },
+      'backpack':   { stroke: '#3b82f6', shadow: 'rgba(59,130,246,0.85)', bg: 'rgba(7,25,65,0.9)',  text: '#bfdbfe' },
+      'handbag':    { stroke: '#3b82f6', shadow: 'rgba(59,130,246,0.85)', bg: 'rgba(7,25,65,0.9)',  text: '#bfdbfe' },
+      'gun':        { stroke: '#ef4444', shadow: 'rgba(239,68,68,0.85)',  bg: 'rgba(69,10,10,0.9)', text: '#fecaca' },
+      'default':    { stroke: '#a855f7', shadow: 'rgba(168,85,247,0.85)', bg: 'rgba(46,16,101,0.9)', text: '#e9d5ff' },
+    };
+
+    freshObjects.forEach(ob => {
+      if (ob.left == null || ob.right == null) return;
+      const { x, y, w, h } = toCanvas(ob);
+      const col = OBJ_COLORS[ob.class_name] || OBJ_COLORS['default'];
+      const pct = ob.confidence != null ? ` ${Math.round(ob.confidence * 100)}%` : '';
+      const label = `${(ob.class_name || 'object').toUpperCase()}${pct}`;
+
+      ctx.save();
+      ctx.strokeStyle = col.stroke;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([6, 3]);
+      ctx.shadowColor = col.shadow;
+      ctx.shadowBlur = 8;
+      ctx.strokeRect(x, y, w, h);
+      ctx.setLineDash([]);
+      ctx.shadowBlur = 0;
+
+      ctx.font = '700 11px Inter, system-ui, sans-serif';
+      const lw = ctx.measureText(label).width + 14;
+      const lx = x;
+      const ly = Math.min(y + h + 2, rect.height - 22);
+
+      ctx.fillStyle = col.bg;
+      ctx.fillRect(lx, ly, lw, 20);
+      ctx.strokeStyle = col.stroke;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(lx, ly, lw, 20);
+      ctx.fillStyle = col.text;
+      ctx.fillText(label, lx + 7, ly + 14);
+      ctx.restore();
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detectionFresh, overlayBoxes, objectBoxes, latestDetection, analysisMethod, isKnown, isAuthorized]);
+
+  useEffect(() => {
+    redrawOverlay();
+    window.addEventListener('resize', redrawOverlay);
+    return () => window.removeEventListener('resize', redrawOverlay);
+  }, [redrawOverlay]);
 
   if (!online || !camera.enabled) {
     return (
@@ -98,29 +345,49 @@ function LiveFeed({ camera, onDetectionMetadata }) {
         ref={imgRef}
         src={streamUrl}
         alt={camera.name}
-        className="w-full h-full object-cover"
-        onLoad={() => setLoading(false)}
+        className="w-full h-full object-contain bg-black"
+        onLoad={() => {
+          setLoading(false);
+          requestAnimationFrame(redrawOverlay);
+        }}
         onError={() => { setLoading(false); setStreamError(true); }}
+      />
+
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 z-10 pointer-events-none"
       />
 
       {detectionFresh && latestDetection && (
         <div
           className={cn(
             'absolute bottom-2 right-2 px-3 py-2 rounded-lg border shadow-lg backdrop-blur-sm z-20 max-w-[80%]',
-            isKnown && isAuthorized
+            analysisMethod === 'opencv'
+              ? 'bg-emerald-900/85 border-emerald-500/60 text-emerald-100'
+              : isKnown && isAuthorized
               ? 'bg-emerald-900/80 border-emerald-500/60 text-emerald-200'
               : isKnown
               ? 'bg-amber-900/80 border-amber-500/60 text-amber-200'
               : 'bg-red-900/80 border-red-500/60 text-red-200'
           )}
         >
-          <p className="text-xs font-bold truncate">
-            {isKnown ? (latestDetection.person_name || 'Known Person') : 'Unknown Face'}
+          <p className="text-xs font-bold truncate leading-tight">
+            {analysisMethod === 'opencv'
+              ? `FACE DETECTED${faceCount > 1 ? ` • ${faceCount}` : ''}`
+              : isKnown ? (latestDetection.person_name || 'Known Person') : '⚠ UNKNOWN FACE'}
           </p>
-          <p className="text-[10px] opacity-90 truncate">
-            {isKnown
-              ? `${latestDetection.person_employee_id || 'N/A'} • ${isAuthorized ? 'AUTHORIZED' : 'UNAUTHORIZED'}`
-              : 'NO MATCH'}
+          {analysisMethod !== 'opencv' && isKnown && (
+            <p className="text-[10px] opacity-90 truncate">
+              {latestDetection.person_employee_id ? `ID: ${latestDetection.person_employee_id}` : ''}
+              {latestDetection.person_role ? ` · ${latestDetection.person_role}` : ''}
+            </p>
+          )}
+          <p className="text-[10px] opacity-75 truncate">
+            {analysisMethod === 'opencv'
+              ? 'OpenCV · Local'
+              : isKnown
+                ? `${isAuthorized ? '✓ AUTHORIZED' : '✗ UNAUTHORIZED'}${latestDetection.confidence != null ? ` · ${Math.round(latestDetection.confidence * 100)}%` : ''}`
+                : 'No match in database'}
           </p>
         </div>
       )}
@@ -157,7 +424,7 @@ function SnapshotFeed({ camera }) {
         </div>
       )}
       {snapshot
-        ? <img src={snapshot} alt={camera.name} className="w-full h-full object-cover" />
+        ? <img src={snapshot} alt={camera.name} className="w-full h-full object-contain bg-black" />
         : !loading && (
           <div className="flex flex-col items-center justify-center w-full h-full gap-2 text-slate-600">
             <FiCamera className="text-3xl" />
@@ -173,12 +440,18 @@ function CameraCard({ camera, onEdit, onDelete }) {
   const [detectionMeta, setDetectionMeta] = useState({
     latestDetection: null,
     detectionCount: 0,
-    detectionAge: null
+    detectionAge: null,
+    overlayBoxes: [],
+    analysisMethod: 'opencv',
+    faceCount: 0,
   });
 
   const isKnown = Boolean(detectionMeta.latestDetection?.person_id);
   const isAuthorized = detectionMeta.latestDetection?.person_authorized === 1;
-  const detectionFresh = detectionMeta.detectionAge && detectionMeta.detectionAge <= 30000;
+  const detectionFresh = detectionMeta.detectionAge && detectionMeta.detectionAge <= 120000;
+  const faceCount = detectionMeta.latestDetection?.face_count || detectionMeta.overlayBoxes.length || detectionMeta.faceCount || 0;
+  const hasFaceBoxes = detectionFresh && detectionMeta.overlayBoxes.length > 0;
+  const localAnalysisOn = camera.face_recognition_enabled;
   const hasRecentDetection = detectionFresh && detectionMeta.latestDetection;
 
   return (
@@ -204,18 +477,14 @@ function CameraCard({ camera, onEdit, onDelete }) {
         {/* FR Status Badge - top right */}
         <div className={cn(
           'absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold border z-20 transition-all',
-          camera.face_recognition_enabled
-            ? hasRecentDetection && isKnown && isAuthorized
-              ? 'bg-emerald-900/80 text-emerald-300 border-emerald-500/50'
-              : hasRecentDetection && isKnown
-              ? 'bg-amber-900/80 text-amber-300 border-amber-500/50'
-              : hasRecentDetection
-              ? 'bg-red-900/80 text-red-300 border-red-500/50'
+          localAnalysisOn
+            ? hasFaceBoxes
+              ? 'bg-emerald-900/85 text-emerald-200 border-emerald-500/60'
               : 'bg-blue-900/80 text-blue-300 border-blue-500/50'
             : 'bg-slate-900/80 text-slate-400 border-slate-600/50'
         )}>
           <BsShieldCheck className="text-[10px]" />
-          {camera.face_recognition_enabled ? 'FR ON' : 'FR OFF'}
+          {localAnalysisOn ? 'LOCAL AI' : 'AI OFF'}
         </div>
 
         {/* Disabled overlay */}
@@ -249,16 +518,33 @@ function CameraCard({ camera, onEdit, onDelete }) {
 
         {/* Detection Statistics - New */}
         {camera.face_recognition_enabled && (
-          <div className="mb-3 p-2.5 bg-surface-700/50 rounded-lg border border-surface-600">
+          <div className="mb-3 p-3 bg-emerald-950/20 rounded-xl border border-emerald-500/15">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.18em] text-emerald-300/80 font-semibold">Local analysis</p>
+                <p className="text-sm font-semibold text-white">
+                  {hasFaceBoxes ? `${faceCount || detectionMeta.overlayBoxes.length || 1} face(s) detected` : 'Watching for faces'}
+                </p>
+              </div>
+              <span className={cn(
+                'px-2.5 py-1 rounded-full text-[11px] font-bold border',
+                hasFaceBoxes
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                  : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+              )}>
+                {hasFaceBoxes ? 'ACTIVE' : 'SCANNING'}
+              </span>
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               {/* Detection Count */}
               <div>
-                <p className="text-[10px] text-slate-500 uppercase tracking-wide">Detections</p>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wide">Events</p>
                 <p className="text-sm font-bold text-white">{detectionMeta.detectionCount}</p>
               </div>
               {/* Last Detection */}
               <div>
-                <p className="text-[10px] text-slate-500 uppercase tracking-wide">Last Detection</p>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wide">Last scan</p>
                 {hasRecentDetection ? (
                   <p className="text-sm font-bold text-emerald-300">
                     {Math.round(detectionMeta.detectionAge / 1000)}s ago
@@ -269,19 +555,19 @@ function CameraCard({ camera, onEdit, onDelete }) {
               </div>
             </div>
 
-            {/* Person Info - if recent detection */}
+            {/* Analysis summary */}
             {hasRecentDetection && detectionMeta.latestDetection && (
               <div className="mt-2 pt-2 border-t border-surface-600">
-                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Current Face</p>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Current analysis</p>
                 <p className="text-xs font-semibold text-white truncate">
-                  {isKnown ? detectionMeta.latestDetection.person_name : '👤 Unknown'}
+                  {localAnalysisOn ? 'Face detected in live view' : (isKnown ? detectionMeta.latestDetection.person_name : 'No face data')}
                 </p>
-                {isKnown && (
-                  <p className={cn(
-                    'text-[10px] font-medium mt-0.5',
-                    isAuthorized ? 'text-emerald-400' : 'text-amber-400'
-                  )}>
-                    {isAuthorized ? '✓ AUTHORIZED' : '⚠ UNAUTHORIZED'}
+                <p className="text-[10px] font-medium mt-0.5 text-emerald-300">
+                  {localAnalysisOn ? 'OpenCV green-box overlay enabled' : (isAuthorized ? 'AUTHORIZED' : 'UNAUTHORIZED')}
+                </p>
+                {hasFaceBoxes && (
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {detectionMeta.overlayBoxes.length} box{detectionMeta.overlayBoxes.length !== 1 ? 'es' : ''} rendered on video
                   </p>
                 )}
               </div>
@@ -344,8 +630,8 @@ function CameraRow({ camera, onEdit, onDelete }) {
       <td className="py-3 px-4">
         <div className="flex gap-2">
           {camera.face_recognition_enabled && (
-            <span className="px-2 py-1 rounded text-xs font-bold bg-blue-900/20 text-blue-300 border border-blue-700/30">
-              FR
+            <span className="px-2 py-1 rounded text-xs font-bold bg-emerald-900/20 text-emerald-300 border border-emerald-700/30">
+              AI
             </span>
           )}
           {!camera.enabled && (
