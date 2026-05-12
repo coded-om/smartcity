@@ -149,5 +149,5 @@ if __name__ == '__main__':
     print(f"   DB  → {config.DB_PATH}")
     print(f"   API → http://127.0.0.1:{port}")
     print(f"   WS  → ws://0.0.0.0:{port}/socket.io")
-    socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False, allow_unsafe_werkzeug=True)
 

@@ -44,9 +44,9 @@ except Exception:
 # ── Optical-flow thresholds ────────────────────────────────────────────────
 # Tuned for 640×480 @ 5fps on RPi5.
 # Raise FIGHT_MAG / RUN_MAG if you get too many false positives.
-FIGHT_MAG   = float(8.0)    # mean motion magnitude to trigger FIGHTING
-FIGHT_VAR   = float(2.5)    # variance of flow directions (radians) — chaotic = fight
-RUN_MAG     = float(5.0)    # mean motion magnitude to trigger SUSPICIOUS_MOVEMENT
+FIGHT_MAG   = float(15.0)   # mean motion magnitude to trigger FIGHTING (calibrated for EZVIZ cam)
+FIGHT_VAR   = float(0.30)   # circular variance [0-1]; set low — VAR is always 0.7+ on this camera so MAG is the real discriminator
+RUN_MAG     = float(8.0)    # mean motion magnitude to trigger SUSPICIOUS_MOVEMENT
 MIN_CORNERS = 20            # minimum trackable corners; below this → skip frame
 
 # ── Weapon → threat mapping ────────────────────────────────────────────────

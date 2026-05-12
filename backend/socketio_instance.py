@@ -7,10 +7,10 @@ Keeping the instance here (not in app.py) prevents circular imports.
 from flask_socketio import SocketIO
 
 # async_mode='eventlet' gives the best performance on RPi5.
-# Falls back gracefully to threading if eventlet is not installed.
+# async_mode='threading' — compatible with Python 3.13 (eventlet doesn't support 3.13).
 socketio = SocketIO(
     cors_allowed_origins='*',
-    async_mode='eventlet',
+    async_mode='threading',
     logger=False,
     engineio_logger=False,
     ping_timeout=20,

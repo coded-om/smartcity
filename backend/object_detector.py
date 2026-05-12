@@ -16,9 +16,14 @@ Usage::
 """
 
 import json
+import os
 import threading
 from pathlib import Path
 from typing import List
+
+from config import _load_env_file
+
+_load_env_file()
 
 # ── YOLO availability flag ─────────────────────────────────────────────────
 try:
@@ -29,20 +34,36 @@ except Exception as _e:
     _YOLO = None
     YOLO_AVAILABLE = False
 
-# ── Security-relevant COCO classes ────────────────────────────────────────
-SECURITY_CLASSES = {
+# ── Security-relevant classes (default COCO-like) ─────────────────────────
+DEFAULT_SECURITY_CLASSES = {
     'cell phone', 'knife', 'scissors', 'backpack', 'handbag',
     'gun', 'pistol', 'rifle',  # not in standard COCO but some custom models have them
 }
 
+_ENV_CLASSES = {
+    c.strip().lower()
+    for c in os.getenv('YOLO_TARGET_CLASSES', '').split(',')
+    if c.strip()
+}
+SECURITY_CLASSES = _ENV_CLASSES or DEFAULT_SECURITY_CLASSES
+
 # Minimum confidence threshold
 CONF_THRESHOLD = 0.35
+CLASS_FILTERING_ENABLED = os.getenv('YOLO_CLASS_FILTERING', '1').strip().lower() not in {
+    '0', 'false', 'no', 'off'
+}
 
 # Model paths
 # ONNX runs ~2× faster than PyTorch on RPi5 CPU (no GPU/NPU).
 # On first run we export yolov8n.pt → yolov8n.onnx automatically.
 PT_MODEL_NAME   = 'yolov8n.pt'
 ONNX_MODEL_NAME = 'yolov8n.onnx'
+CUSTOM_MODEL_PATH = os.getenv('YOLO_MODEL_PATH', '').strip()
+MODEL_PROFILE = os.getenv('YOLO_MODEL_PROFILE', 'default').strip().lower()
+SUSPICIOUS_MODEL_PATHS = [
+    Path(__file__).parent / 'models' / 'suspicious-detection.pt',
+    Path(__file__).parent / 'models' / 'suspicious-detection.onnx',
+]
 
 # ── Lazy singleton ─────────────────────────────────────────────────────────
 _model = None
@@ -65,6 +86,30 @@ def _ensure_onnx() -> str:
         return PT_MODEL_NAME
 
 
+def _resolve_model_path() -> str:
+    """
+    Resolve which model should be used.
+
+    Priority:
+      1) YOLO_MODEL_PATH (explicit env override)
+      2) suspicious profile default file under backend/models/
+      3) existing yolov8n.onnx/.pt flow
+    """
+    if CUSTOM_MODEL_PATH:
+        custom = Path(CUSTOM_MODEL_PATH).expanduser()
+        if custom.exists():
+            return str(custom)
+        print(f"⚠️  YOLO_MODEL_PATH not found: {custom} — falling back")
+
+    if MODEL_PROFILE == 'suspicious':
+        for candidate in SUSPICIOUS_MODEL_PATHS:
+            if candidate.exists():
+                return str(candidate)
+        print("⚠️  suspicious profile requested but model file not found in backend/models/")
+
+    return _ensure_onnx()
+
+
 def _get_model():
     """Load ONNX model once, reuse across calls. Falls back to .pt if needed."""
     global _model
@@ -75,14 +120,16 @@ def _get_model():
     with _model_lock:
         if _model is None:
             try:
-                model_path = _ensure_onnx()
+                model_path = _resolve_model_path()
                 _model = _YOLO(model_path)
                 # fuse() is a no-op for ONNX but harmless for .pt fallback
                 try:
                     _model.fuse()
                 except Exception:
                     pass
-                print(f"✅ YOLOv8 nano loaded ({model_path})")
+                print(f"✅ YOLO detector loaded ({model_path})")
+                if SECURITY_CLASSES:
+                    print(f"🎯 YOLO class filter active: {sorted(SECURITY_CLASSES)}")
             except Exception as e:
                 print(f"❌ Failed to load YOLO model: {e}")
                 return None
@@ -165,8 +212,8 @@ def detect_objects(frame_path: str, conf: float = CONF_THRESHOLD) -> List[dict]:
             cls_id = int(box.cls[0].item())
             class_name = names.get(cls_id, str(cls_id)).lower()
 
-            # Keep only security-relevant classes
-            if class_name not in SECURITY_CLASSES:
+            # Keep only target classes when class filtering is enabled
+            if CLASS_FILTERING_ENABLED and class_name not in SECURITY_CLASSES:
                 continue
 
             confidence = float(box.conf[0].item())

@@ -19,7 +19,7 @@ async function _createSocket() {
   // Connect to the same origin the backend is served from.
   // transports: ['websocket', 'polling'] — try WS first, fall back to long-poll.
   return io(base, {
-    transports: ['websocket', 'polling'],
+    transports: ['polling'],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
