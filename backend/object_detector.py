@@ -18,9 +18,7 @@ Usage::
 import json
 import threading
 from pathlib import Path
-from typing import List, Optional
-
-import numpy as np
+from typing import List
 
 # ── YOLO availability flag ─────────────────────────────────────────────────
 try:
@@ -40,16 +38,35 @@ SECURITY_CLASSES = {
 # Minimum confidence threshold
 CONF_THRESHOLD = 0.35
 
-# Model path – yolov8n.pt is downloaded automatically by ultralytics on first run
-MODEL_NAME = 'yolov8n.pt'
+# Model paths
+# ONNX runs ~2× faster than PyTorch on RPi5 CPU (no GPU/NPU).
+# On first run we export yolov8n.pt → yolov8n.onnx automatically.
+PT_MODEL_NAME   = 'yolov8n.pt'
+ONNX_MODEL_NAME = 'yolov8n.onnx'
 
 # ── Lazy singleton ─────────────────────────────────────────────────────────
 _model = None
 _model_lock = threading.Lock()
 
 
+def _ensure_onnx() -> str:
+    """Return path to yolov8n.onnx, exporting from .pt if needed."""
+    onnx_path = Path(ONNX_MODEL_NAME)
+    if onnx_path.exists():
+        return str(onnx_path)
+    print(f"🔄 Exporting {PT_MODEL_NAME} → {ONNX_MODEL_NAME} (one-time, ~30s)…")
+    try:
+        pt_model = _YOLO(PT_MODEL_NAME)
+        exported = pt_model.export(format='onnx', imgsz=640, simplify=True)
+        print(f"✅ ONNX export done → {exported}")
+        return str(exported)
+    except Exception as e:
+        print(f"⚠️  ONNX export failed ({e}), falling back to .pt")
+        return PT_MODEL_NAME
+
+
 def _get_model():
-    """Load model once, reuse across calls."""
+    """Load ONNX model once, reuse across calls. Falls back to .pt if needed."""
     global _model
     if _model is not None:
         return _model
@@ -58,9 +75,14 @@ def _get_model():
     with _model_lock:
         if _model is None:
             try:
-                _model = _YOLO(MODEL_NAME)
-                _model.fuse()          # merge Conv+BN layers → faster inference
-                print(f"✅ YOLOv8 nano loaded ({MODEL_NAME})")
+                model_path = _ensure_onnx()
+                _model = _YOLO(model_path)
+                # fuse() is a no-op for ONNX but harmless for .pt fallback
+                try:
+                    _model.fuse()
+                except Exception:
+                    pass
+                print(f"✅ YOLOv8 nano loaded ({model_path})")
             except Exception as e:
                 print(f"❌ Failed to load YOLO model: {e}")
                 return None
@@ -76,6 +98,15 @@ def _normalize_bbox(x1: float, y1: float, x2: float, y2: float,
         'right':  round(min(width,  x2) / width,  4),
         'bottom': round(min(height, y2) / height, 4),
     }
+
+
+def warmup() -> bool:
+    """Pre-load the YOLO model at startup to avoid first-request latency."""
+    model = _get_model()
+    if model is not None:
+        print("🔥 YOLOv8 warmup complete — model is ready in memory")
+        return True
+    return False
 
 
 def detect_objects(frame_path: str, conf: float = CONF_THRESHOLD) -> List[dict]:

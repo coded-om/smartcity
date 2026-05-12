@@ -211,7 +211,7 @@ def get_object_detections(camera_id):
     """Return recent object detections for a camera."""
     hours = max(0.01, min(float(request.args.get('hours', 1)), 168))
     limit = max(1, min(int(request.args.get('limit', 50)), 200))
-    conn = db.get_db()
+    conn = get_db()
     rows = conn.execute(
         """SELECT od.*, c.name AS camera_name, c.location
            FROM object_detections od

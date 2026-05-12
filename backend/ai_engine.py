@@ -113,6 +113,38 @@ def auto_train_if_ready(device_id: str) -> bool:
     return False
 
 
+def retrain_all_devices() -> int:
+    """
+    Periodically retrain models for ALL devices that have enough data.
+    Called by APScheduler every RETRAIN_INTERVAL_HOURS hours.
+    Unlike auto_train_if_ready, this forces a retrain even when a model exists.
+    Returns the count of devices retrained.
+    """
+    print("🔄 Scheduled retrain: starting for all devices…")
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+    dev_ids = [r[0] for r in conn.execute("SELECT device_id FROM devices").fetchall()]
+    conn.close()
+    count = 0
+    for dev_id in dev_ids:
+        try:
+            check = sqlite3.connect(str(DB_PATH), timeout=30.0)
+            rows = check.execute(
+                "SELECT COUNT(*) FROM readings WHERE device_id=? AND alert_type IN ('NORMAL','TRAINING')",
+                (dev_id,),
+            ).fetchone()[0]
+            check.close()
+            if rows >= MIN_SAMPLES:
+                train_model(dev_id)
+                count += 1
+                print(f"🤖 Retrained model for {dev_id} ({rows} samples)")
+            else:
+                print(f"⏭️  Skipped {dev_id}: only {rows}/{MIN_SAMPLES} samples")
+        except Exception as e:
+            print(f"⚠️  Scheduled retrain failed for {dev_id}: {e}")
+    print(f"✅ Scheduled retrain done — {count} device(s) updated")
+    return count
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Prediction
 # ─────────────────────────────────────────────────────────────────────────────

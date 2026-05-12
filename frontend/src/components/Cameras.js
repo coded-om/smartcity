@@ -7,6 +7,7 @@ import { BsShieldCheck } from 'react-icons/bs';
 import { apiFetch } from '../apiBase';
 import { cn } from '../lib/utils';
 import CameraModal from './CameraModal';
+import getSocket from '../socketClient';
 
 function parseBBoxList(rawValue) {
   if (!rawValue) return [];
@@ -18,10 +19,18 @@ function parseBBoxList(rawValue) {
     return list
       .filter(Boolean)
       .map((box) => {
-        const left = Number(box.left ?? box.x ?? 0);
-        const top = Number(box.top ?? box.y ?? 0);
-        const right = Number(box.right ?? (box.x != null && box.width != null ? Number(box.x) + Number(box.width) : 0));
-        const bottom = Number(box.bottom ?? (box.y != null && box.height != null ? Number(box.y) + Number(box.height) : 0));
+        const left   = Number(box.left ?? box.x ?? 0);
+        const top    = Number(box.top ?? box.y ?? 0);
+        const right  = Number(
+          box.right ?? (box.x != null && box.width != null
+            ? Number(box.x) + Number(box.width)
+            : 0)
+        );
+        const bottom = Number(
+          box.bottom ?? (box.y != null && box.height != null
+            ? Number(box.y) + Number(box.height)
+            : 0)
+        );
         return { left, top, right, bottom };
       })
       .filter((box) => [box.left, box.top, box.right, box.bottom].every(Number.isFinite));
@@ -55,10 +64,55 @@ function LiveFeed({ camera, onDetectionMetadata }) {
   const [latestDetection, setLatestDetection] = useState(null);
   const [overlayBoxes, setOverlayBoxes] = useState([]);
   const [objectBoxes, setObjectBoxes] = useState([]);
+  const [threatAlert, setThreatAlert] = useState(null);   // real-time threat from WebSocket
+  const threatTimerRef = useRef(null);
   const imgRef = useRef(null);
   const canvasRef = useRef(null);
   const streamNonceRef = useRef(Date.now());
   const streamUrl = `/api/cameras/${camera.id}/mjpeg?fps=5&t=${streamNonceRef.current}`;
+
+  // WebSocket listeners for instant face + threat events
+  useEffect(() => {
+    let cancelled = false;
+    getSocket().then((sock) => {
+      if (cancelled) return;
+
+      const onFace = (data) => {
+        if (data.camera_id !== camera.id) return;
+        const boxes = parseBBoxList(data.bbox_json);
+        setLatestDetection({ ...data, timestamp: data.timestamp });
+        setOverlayBoxes(boxes);
+        if (onDetectionMetadata) {
+          onDetectionMetadata({
+            latestDetection: data,
+            detectionCount: 1,
+            detectionAge: 0,
+            overlayBoxes: boxes,
+            analysisMethod: data.method || 'dlib',
+            faceCount: data.face_count || boxes.length,
+          });
+        }
+      };
+
+      const onThreat = (data) => {
+        if (data.camera_id !== camera.id) return;
+        setThreatAlert(data);
+        clearTimeout(threatTimerRef.current);
+        threatTimerRef.current = setTimeout(() => setThreatAlert(null), 15000);
+      };
+
+      sock.on('face_detected',   onFace);
+      sock.on('threat_detected', onThreat);
+      sock.on('weapon_detected', onThreat);
+
+      return () => {
+        sock.off('face_detected',   onFace);
+        sock.off('threat_detected', onThreat);
+        sock.off('weapon_detected', onThreat);
+      };
+    });
+    return () => { cancelled = true; clearTimeout(threatTimerRef.current); };
+  }, [camera.id, onDetectionMetadata]);
 
   // Reset error state when camera changes
   useEffect(() => {
@@ -92,19 +146,37 @@ function LiveFeed({ camera, onDetectionMetadata }) {
         } else if (!cancelled) {
           setLatestDetection(null);
           setOverlayBoxes([]);
-          if (onDetectionMetadata) onDetectionMetadata({ latestDetection: null, detectionCount: 0, detectionAge: null, overlayBoxes: [], analysisMethod: 'opencv', faceCount: 0 });
+          if (onDetectionMetadata) {
+            onDetectionMetadata({
+              latestDetection: null,
+              detectionCount: 0,
+              detectionAge: null,
+              overlayBoxes: [],
+              analysisMethod: 'opencv',
+              faceCount: 0,
+            });
+          }
         }
       } catch (_) {
         if (!cancelled) {
           setLatestDetection(null);
           setOverlayBoxes([]);
-          if (onDetectionMetadata) onDetectionMetadata({ latestDetection: null, detectionCount: 0, detectionAge: null, overlayBoxes: [], analysisMethod: 'opencv', faceCount: 0 });
+          if (onDetectionMetadata) {
+            onDetectionMetadata({
+              latestDetection: null,
+              detectionCount: 0,
+              detectionAge: null,
+              overlayBoxes: [],
+              analysisMethod: 'opencv',
+              faceCount: 0,
+            });
+          }
         }
       }
     };
 
     loadLatestDetection();
-    const iv = setInterval(loadLatestDetection, 5000);
+    const iv = setInterval(loadLatestDetection, 2000);
 
     // Object detection polling (independent)
     let objCancelled = false;
@@ -123,7 +195,7 @@ function LiveFeed({ camera, onDetectionMetadata }) {
       } catch (_) {}
     };
     loadObjects();
-    const objIv = setInterval(loadObjects, 5000);
+    const objIv = setInterval(loadObjects, 2000);
 
     return () => {
       cancelled = true;
@@ -136,7 +208,7 @@ function LiveFeed({ camera, onDetectionMetadata }) {
   const detectionAgeMs = latestDetection?.timestamp
     ? Math.abs(Date.now() - parseDbTimestamp(latestDetection.timestamp))
     : Number.MAX_SAFE_INTEGER;
-  const detectionFresh = detectionAgeMs <= 120000;  // 2m threshold so the overlay stays visible on the Pi
+  const detectionFresh = detectionAgeMs <= 15_000;  // 15-second freshness window
   const faceCount = latestDetection?.face_count || overlayBoxes.length;
   const isKnown = Boolean(latestDetection?.person_id);
   const isAuthorized = latestDetection?.person_authorized === 1;
@@ -264,7 +336,7 @@ function LiveFeed({ camera, onDetectionMetadata }) {
     }
 
     // ── Object detection boxes ────────────────────────────────────────────
-    const OBJ_AGE_LIMIT = 120000;
+    const OBJ_AGE_LIMIT = 15000;
     const freshObjects = objectBoxes.filter(ob => {
       const age = Math.abs(Date.now() - (parseDbTimestamp(ob.timestamp) || 0));
       return age <= OBJ_AGE_LIMIT && ob.left != null;
@@ -391,6 +463,31 @@ function LiveFeed({ camera, onDetectionMetadata }) {
           </p>
         </div>
       )}
+
+      {/* ── Real-time threat alert badge (WebSocket) ─────────────────── */}
+      {threatAlert && (
+        <div className={cn(
+          'absolute top-2 left-2 right-2 px-3 py-2 rounded-lg border shadow-xl backdrop-blur-sm z-30',
+          threatAlert.severity === 'CRITICAL'
+            ? 'bg-red-900/90 border-red-500/80 text-red-100'
+            : threatAlert.severity === 'HIGH'
+            ? 'bg-orange-900/90 border-orange-500/70 text-orange-100'
+            : 'bg-yellow-900/90 border-yellow-500/60 text-yellow-100',
+        )}>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-bold truncate animate-pulse">
+              🚨 {(threatAlert.threat_type || '').replace(/_/g, ' ')}
+              {threatAlert.weapon_class ? ` · ${threatAlert.weapon_class.toUpperCase()}` : ''}
+            </p>
+            <span className="text-[10px] shrink-0 opacity-80">
+              {threatAlert.confidence ? `${Math.round(threatAlert.confidence * 100)}%` : ''}
+            </span>
+          </div>
+          <p className="text-[10px] opacity-75">
+            {threatAlert.severity} · {threatAlert.source === 'weapon' ? 'Weapon detected' : 'Behaviour analysis'}
+          </p>
+        </div>
+      )}
     </>
   );
 }
@@ -448,8 +545,12 @@ function CameraCard({ camera, onEdit, onDelete }) {
 
   const isKnown = Boolean(detectionMeta.latestDetection?.person_id);
   const isAuthorized = detectionMeta.latestDetection?.person_authorized === 1;
-  const detectionFresh = detectionMeta.detectionAge && detectionMeta.detectionAge <= 120000;
-  const faceCount = detectionMeta.latestDetection?.face_count || detectionMeta.overlayBoxes.length || detectionMeta.faceCount || 0;
+  const detectionFresh = Boolean(detectionMeta.detectionAge)
+    && detectionMeta.detectionAge <= 120_000;
+  const faceCount = detectionMeta.latestDetection?.face_count
+    || detectionMeta.overlayBoxes.length
+    || detectionMeta.faceCount
+    || 0;
   const hasFaceBoxes = detectionFresh && detectionMeta.overlayBoxes.length > 0;
   const localAnalysisOn = camera.face_recognition_enabled;
   const hasRecentDetection = detectionFresh && detectionMeta.latestDetection;

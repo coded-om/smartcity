@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
 
-import Sidebar      from './components/Sidebar';
-import Header       from './components/Header';
-import Overview     from './components/Overview';
-import LiveMonitor  from './components/LiveMonitor';
-import Cameras      from './components/Cameras';
-import ForensicLogs from './components/ForensicLogs';
-import AIAnalysis   from './components/AIAnalysis';
-import SecurityMap  from './components/SecurityMap';
-import ReportCenter from './components/ReportCenter';
-import Settings     from './components/Settings';
+import Sidebar       from './components/Sidebar';
+import Header        from './components/Header';
+import Overview      from './components/Overview';
+import LiveMonitor   from './components/LiveMonitor';
+import Cameras       from './components/Cameras';
+import ForensicLogs  from './components/ForensicLogs';
+import AIAnalysis    from './components/AIAnalysis';
+import SecurityMap   from './components/SecurityMap';
+import ReportCenter  from './components/ReportCenter';
+import Settings      from './components/Settings';
+import ThreatMonitor from './components/ThreatMonitor';
 import { apiFetch } from './apiBase';
 import './App.css';
 
@@ -121,6 +122,10 @@ function App() {
           onMenuClick={() => setSidebarOpen(prev => !prev)}
         />
         <div className="content-area">
+          <ThreatMonitor
+            className="mb-4"
+            onViewCamera={(camId) => setActiveView('cameras')}
+          />
           {renderView()}
         </div>
       </div>

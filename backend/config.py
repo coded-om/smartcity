@@ -34,7 +34,7 @@ RECORDINGS_DIR = Path(__file__).parent / 'recordings'
 DEVICE_TIMEOUT_SECS = 15
 
 # ── Face recognition ──────────────────────────────────────────────────────────
-FR_LOOP_INTERVAL_SECS = max(5, int(os.getenv('FACE_RECOGNITION_LOOP_INTERVAL_SECS', '8')))
+FR_LOOP_INTERVAL_SECS = max(2, int(os.getenv('FACE_RECOGNITION_LOOP_INTERVAL_SECS', '5')))
 
 # ── Cooldowns ─────────────────────────────────────────────────────────────────
 RECORDING_COOLDOWN_SECS     = max(15,   int(os.getenv('RECORDING_COOLDOWN_SECS',     '90')))

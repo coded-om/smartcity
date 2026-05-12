@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
+from concurrent.futures import ThreadPoolExecutor
 
 # OpenCV is used for local face analysis / green-box overlays.
 try:
@@ -53,6 +54,16 @@ _face_recognition_threads: Dict[int, threading.Thread] = {}
 _thread_stop_flags: Dict[int, threading.Event] = {}
 _encoding_cache: Dict[int, np.ndarray] = {}
 _cache_lock = threading.Lock()
+
+# ── ThreadPoolExecutor for concurrent frame processing ─────────────────────
+# Each camera submits its heavy processing (dlib/YOLO) to this shared pool,
+# allowing multiple cameras to run in parallel without blocking each other.
+_FR_WORKERS = max(2, int(os.getenv('FR_WORKER_THREADS', '4')))
+_frame_executor = ThreadPoolExecutor(max_workers=_FR_WORKERS, thread_name_prefix='fr_worker')
+# Tracks the pending future per camera so we don't pile up tasks faster than
+# they can be consumed (skip if the previous frame is still being processed).
+_pending_futures: Dict[int, object] = {}
+_pending_futures_lock = threading.Lock()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -246,9 +257,9 @@ def _luxand_enroll_subject(subject: str, photo_path: str) -> Tuple[bool, str, Op
 def _luxand_search_photo(photo_path: str) -> List[dict]:
     """Search for known faces in photo using Luxand cloud with exponential backoff retry."""
     last_error = None
-    backoff_delays = [0.1, 0.25, 0.5, 1.0]  # Exponential backoff: 100ms, 250ms, 500ms, 1s
-    
-    for attempt, delay in enumerate(backoff_delays, 1):
+    delays = [0.1, 0.25, 0.5, 1.0]
+
+    for attempt, delay in enumerate(delays, 1):
         try:
             with open(photo_path, 'rb') as photo_file:
                 resp = requests.post(
@@ -269,11 +280,11 @@ def _luxand_search_photo(photo_path: str) -> List[dict]:
             return _extract_cloud_candidates(payload)
         except Exception as e:
             last_error = e
-            if attempt < len(backoff_delays):
-                print(f"🔄 Luxand search retry {attempt}/{len(backoff_delays)} after {delay*1000:.0f}ms (error: {str(e)[:60]}...)")
+            if attempt < len(delays):
+                print(f"🔄 Luxand search retry {attempt}/{len(delays)} after {delay*1000:.0f}ms (error: {str(e)[:60]}...)")
                 time.sleep(delay)
             else:
-                print(f"❌ Luxand search failed after {len(backoff_delays)} retries: {str(e)[:100]}")
+                print(f"❌ Luxand search failed after {len(delays)} retries: {str(e)[:100]}")
 
     raise RuntimeError(str(last_error) if last_error else 'Unknown cloud search error')
 
@@ -427,57 +438,51 @@ def _to_db_datetime(dt: datetime) -> str:
 def extract_face_encoding(image_path: str) -> Optional[Tuple[np.ndarray, dict]]:
     """
     Extract face encoding from image file.
-    
+
     Args:
         image_path: Path to image file
-        
+
     Returns:
-        (encoding, metadata) tuple or None if no face detected
-        metadata: {'num_faces', 'face_locations', 'resolution'}
+        (encoding, metadata) tuple or None if no face detected.
+        metadata keys: num_faces, face_locations, resolution
     """
     _check_face_recognition_available()
-    
+
     try:
-        # Load image
         image = face_recognition.load_image_file(image_path)
-        
-        # Detect face locations
         face_locations = face_recognition.face_locations(image, model=FACE_DETECTION_MODEL)
-        
-        if len(face_locations) == 0:
-            return None  # No face detected
-        
-        if len(face_locations) > 1:
-            print(f"⚠️  Warning: {len(face_locations)} faces detected in {image_path}, using first")
-        
-        # Extract encodings
-        encodings = face_recognition.face_encodings(image, face_locations)
-        
-        if len(encodings) == 0:
+
+        if not face_locations:
             return None
-        
+
+        if len(face_locations) > 1:
+            print(f"⚠️  {len(face_locations)} faces in {image_path}, using first")
+
+        encodings = face_recognition.face_encodings(image, face_locations)
+        if not encodings:
+            return None
+
         metadata = {
             'num_faces': len(face_locations),
             'face_locations': face_locations,
-            'resolution': image.shape[:2]
+            'resolution': image.shape[:2],
         }
-        
         return encodings[0], metadata
-        
+
     except Exception as e:
         print(f"❌ Error extracting face encoding from {image_path}: {e}")
         return None
 
 
-def save_encoding(encoding: np.ndarray, file_path: str):
-    """Save face encoding to pickle file"""
+def save_encoding(encoding: np.ndarray, file_path: str) -> None:
+    """Save face encoding to pickle file."""
     Path(file_path).parent.mkdir(parents=True, exist_ok=True)
     with open(file_path, 'wb') as f:
         pickle.dump(encoding, f)
 
 
 def load_encoding(file_path: str) -> Optional[np.ndarray]:
-    """Load face encoding from pickle file"""
+    """Load face encoding from pickle file."""
     try:
         with open(file_path, 'rb') as f:
             return pickle.load(f)
@@ -490,12 +495,12 @@ def load_encoding(file_path: str) -> Optional[np.ndarray]:
 # Person Registration
 # ═══════════════════════════════════════════════════════════════
 
-def register_person(name: str, employee_id: str, photo_file, 
-                   role: str = None, department: str = None, 
+def register_person(name: str, employee_id: str, photo_file,
+                   role: str = None, department: str = None,
                    notes: str = None, authorized: int = 1) -> Tuple[bool, str, Optional[int]]:
     """
     Register a new person with face encoding.
-    
+
     Args:
         name: Full name
         employee_id: Unique employee ID
@@ -504,23 +509,23 @@ def register_person(name: str, employee_id: str, photo_file,
         department: Department name
         notes: Additional notes
         authorized: 1=authorized, 0=unauthorized
-        
+
     Returns:
         (success, message, person_id) tuple
     """
     try:
         # Save photo file
         conn = get_db()
-        
+
         # Check if employee_id already exists
         existing = conn.execute(
             "SELECT id FROM persons WHERE employee_id=?", (employee_id,)
         ).fetchone()
-        
+
         if existing:
             conn.close()
             return False, f"Employee ID '{employee_id}' already exists", None
-        
+
         # Insert person record to get ID
         cursor = conn.execute(
             """INSERT INTO persons (name, employee_id, role, department, notes, authorized)
@@ -529,10 +534,10 @@ def register_person(name: str, employee_id: str, photo_file,
         )
         person_id = cursor.lastrowid
         conn.commit()
-        
+
         # Save photo
         photo_path = PERSONS_PHOTOS_DIR / f"person_{person_id}.jpg"
-        
+
         if hasattr(photo_file, 'save'):
             # Flask file upload object
             photo_file.save(str(photo_path))
@@ -544,7 +549,7 @@ def register_person(name: str, employee_id: str, photo_file,
             # Bytes data
             with open(photo_path, 'wb') as f:
                 f.write(photo_file.read())
-        
+
         if _local_analysis_active():
             # Local OpenCV mode stores the photo for reference; no identity encoding is generated.
             conn.execute(
@@ -599,7 +604,7 @@ def register_person(name: str, employee_id: str, photo_file,
         if not FACE_RECOGNITION_AVAILABLE:
             # Graceful fallback: save the person and photo, skip encoding.
             conn.execute(
-                """UPDATE persons 
+                """UPDATE persons
                    SET photo_path=?, face_encoding_path=NULL, cloud_subject=NULL, updated_at=CURRENT_TIMESTAMP
                    WHERE id=?""",
                 (str(photo_path), person_id)
@@ -639,7 +644,7 @@ def register_person(name: str, employee_id: str, photo_file,
 
         # Update person record with file paths
         conn.execute(
-            """UPDATE persons 
+            """UPDATE persons
                SET photo_path=?, face_encoding_path=?, cloud_subject=NULL, updated_at=CURRENT_TIMESTAMP
                WHERE id=?""",
             (str(photo_path), str(encoding_path), person_id)
@@ -652,7 +657,7 @@ def register_person(name: str, employee_id: str, photo_file,
 
         print(f"✅ Registered person: {name} (ID: {employee_id}, person_id: {person_id})")
         return True, f"Successfully registered {name}", person_id
-        
+
     except Exception as e:
         print(f"❌ Error registering person: {e}")
         return False, f"Error: {str(e)}", None
@@ -662,19 +667,19 @@ def register_person(name: str, employee_id: str, photo_file,
 # Face Matching
 # ═══════════════════════════════════════════════════════════════
 
-def _reload_encoding_cache():
-    """Reload all person encodings into memory cache"""
+def _reload_encoding_cache() -> None:
+    """Reload all person encodings into memory cache."""
     global _encoding_cache
-    
+
     with _cache_lock:
         _encoding_cache.clear()
-        
+
         conn = get_db()
         persons = conn.execute(
             "SELECT id, face_encoding_path FROM persons WHERE face_encoding_path IS NOT NULL"
         ).fetchall()
         conn.close()
-        
+
         for person in persons:
             encoding_path = person['face_encoding_path']
             if not encoding_path or encoding_path.startswith('cloud:'):
@@ -682,49 +687,37 @@ def _reload_encoding_cache():
             encoding = load_encoding(encoding_path)
             if encoding is not None:
                 _encoding_cache[person['id']] = encoding
-        
+
         print(f"🔄 Loaded {len(_encoding_cache)} face encodings into cache")
 
 
 def match_face(face_encoding: np.ndarray, threshold: float = None) -> Tuple[Optional[int], float]:
     """
     Match a face encoding against known persons.
-    
-    Args:
-        face_encoding: 128-d face encoding vector
-        threshold: Match threshold (default: FACE_MATCH_THRESHOLD)
-        
+
     Returns:
-        (person_id, confidence) tuple. person_id=None if no match.
-        confidence is 1.0 - distance (higher = better match)
+        (person_id, confidence) — person_id is None when no match found.
+        confidence = 1.0 - distance (higher is better).
     """
     if threshold is None:
         threshold = FACE_MATCH_THRESHOLD
-    
-    # Ensure encoding cache is loaded
+
     if not _encoding_cache:
         _reload_encoding_cache()
-    
+
     if not _encoding_cache:
         return None, 0.0
-    
-    # Get all known encodings
+
     known_ids = list(_encoding_cache.keys())
     known_encodings = [_encoding_cache[pid] for pid in known_ids]
-    
-    # Calculate distances
     distances = face_recognition.face_distance(known_encodings, face_encoding)
-    
-    # Find best match
-    min_distance_idx = np.argmin(distances)
-    min_distance = distances[min_distance_idx]
-    
-    # Check if match is within threshold
-    if min_distance <= threshold:
-        person_id = known_ids[min_distance_idx]
-        confidence = 1.0 - min_distance
-        return person_id, confidence
-    
+
+    min_idx = int(np.argmin(distances))
+    min_dist = distances[min_idx]
+
+    if min_dist <= threshold:
+        return known_ids[min_idx], round(1.0 - float(min_dist), 4)
+
     return None, 0.0
 
 
@@ -735,11 +728,11 @@ def match_face(face_encoding: np.ndarray, threshold: float = None) -> Tuple[Opti
 def process_camera_frame(camera_id: int, frame_path: str) -> List[dict]:
     """
     Process a camera frame for face detection and recognition.
-    
+
     Args:
         camera_id: Camera ID from database
         frame_path: Path to frame image file
-        
+
     Returns:
         List of detection dicts: [{person_id, person_name, confidence, bbox, snapshot_path}]
     """
@@ -752,7 +745,7 @@ def process_camera_frame(camera_id: int, frame_path: str) -> List[dict]:
         if _cloud_provider_enabled():
             return _process_camera_frame_cloud(camera_id, frame_path)
         return []
-    
+
     try:
         # Load image at full resolution
         image = face_recognition.load_image_file(frame_path)
@@ -766,7 +759,7 @@ def process_camera_frame(camera_id: int, frame_path: str) -> List[dict]:
 
         # Detect face locations on the downscaled image
         face_locations_small = face_recognition.face_locations(small, model=FACE_DETECTION_MODEL)
-        
+
         if len(face_locations_small) == 0:
             return []  # No faces detected
 
@@ -843,7 +836,7 @@ def process_camera_frame(camera_id: int, frame_path: str) -> List[dict]:
         conn = get_db()
         for det in detections:
             conn.execute(
-                """INSERT INTO face_detections 
+                """INSERT INTO face_detections
                    (camera_id, person_id, confidence, snapshot_path, bbox_json,
                     frame_width, frame_height, analysis_method, face_count, timestamp)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
@@ -863,7 +856,7 @@ def process_camera_frame(camera_id: int, frame_path: str) -> List[dict]:
         conn.close()
 
         return detections
-        
+
     except Exception as e:
         print(f"❌ Error processing frame from camera {camera_id}: {e}")
         return []
@@ -926,29 +919,193 @@ def _process_camera_frame_cloud(camera_id: int, frame_path: str) -> List[dict]:
 # Background Face Recognition Loop
 # ═══════════════════════════════════════════════════════════════
 
+def _process_and_handle(camera_id: int, camera_name: str,
+                         temp_frame_path: str, detect_objects_fn) -> None:
+    """
+    Heavy processing submitted to _frame_executor:
+      - Face recognition / local analysis
+      - Object detection (YOLO)
+      - Threat analysis (Optical Flow + weapon check)
+      - Alert triggering + WebSocket emit
+    Runs in a worker thread so the capture loop is never blocked.
+    The temp file is deleted when processing finishes.
+    """
+    try:
+        # ── Lazy imports to avoid circular dependencies ───────────────────
+        try:
+            from socketio_instance import socketio as _sio
+        except Exception:
+            _sio = None
+
+        try:
+            import threat_detector as _td
+            import cv2 as _cv2
+        except Exception:
+            _td = None
+            _cv2 = None
+
+        # ── Face recognition ──────────────────────────────────────────────
+        method = 'opencv' if _local_analysis_active() else 'dlib'
+        detections = process_camera_frame(camera_id, temp_frame_path)
+        if detections:
+            print(f"👁  cam {camera_id} [{method}]: {len(detections)} face(s) found")
+        else:
+            print(f"📷 cam {camera_id} [{method}]: no face")
+
+        # ── Object detection (YOLO) ───────────────────────────────────────
+        weapon_detections = []
+        if detect_objects_fn is not None:
+            try:
+                obj_results = detect_objects_fn(temp_frame_path)
+                if obj_results:
+                    conn = get_db()
+                    for obj in obj_results:
+                        conn.execute(
+                            """INSERT INTO object_detections
+                               (camera_id, class_name, confidence, bbox_json,
+                                frame_width, frame_height, timestamp)
+                               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                            (
+                                camera_id,
+                                obj['class_name'],
+                                obj['confidence'],
+                                obj['bbox_json'],
+                                obj.get('frame_width'),
+                                obj.get('frame_height'),
+                            )
+                        )
+                        print(f"📦 Object detected: {obj['class_name']} "
+                              f"({obj['confidence']:.0%}) cam={camera_id}")
+                        # Collect weapons for threat analysis
+                        if obj.get('class_name', '').lower() in \
+                                {'knife', 'gun', 'pistol', 'rifle', 'scissors'}:
+                            weapon_detections.append(obj)
+                            # Emit weapon event immediately via WebSocket
+                            if _sio:
+                                try:
+                                    _sio.emit('weapon_detected', {
+                                        'camera_id':   camera_id,
+                                        'camera_name': camera_name,
+                                        'class_name':  obj['class_name'],
+                                        'confidence':  obj['confidence'],
+                                        'bbox_json':   obj['bbox_json'],
+                                        'timestamp':   datetime.now().isoformat(),
+                                    })
+                                except Exception:
+                                    pass
+                    conn.commit()
+                    conn.close()
+            except Exception as _oe:
+                print(f"⚠️  Object detection error cam {camera_id}: {_oe}")
+
+        # ── Threat analysis (Optical Flow + weapon check) ─────────────────
+        if _td is not None and _cv2 is not None:
+            try:
+                frame_bgr = _cv2.imread(temp_frame_path)
+                if frame_bgr is not None:
+                    threat = _td.analyze_frame(camera_id, frame_bgr, weapon_detections)
+                    if threat:
+                        print(f"🚨 THREAT cam {camera_id}: {threat['threat_type']} "
+                              f"({threat['confidence']:.0%}) [{threat['source']}]")
+                        if _sio:
+                            try:
+                                _sio.emit('threat_detected', {
+                                    'camera_id':    camera_id,
+                                    'camera_name':  camera_name,
+                                    'threat_type':  threat['threat_type'],
+                                    'confidence':   threat['confidence'],
+                                    'severity':     threat['severity'],
+                                    'source':       threat['source'],
+                                    'weapon_class': threat.get('weapon_class'),
+                                    'bbox_json':    threat.get('bbox_json'),
+                                    'snapshot_path': threat.get('snapshot_path'),
+                                    'timestamp':    threat['timestamp'],
+                                })
+                            except Exception:
+                                pass
+            except Exception as _te:
+                print(f"⚠️  Threat analysis error cam {camera_id}: {_te}")
+
+        # ── Face alert handling ───────────────────────────────────────────
+        for det in detections:
+            if det.get('analysis_method') == 'opencv':
+                print(
+                    f"🟩 Local face detected on camera {camera_id} "
+                    f"({det.get('face_count', 1)} face(s))"
+                )
+                # Emit local face detection
+                if _sio:
+                    try:
+                        _sio.emit('face_detected', {
+                            'camera_id':   camera_id,
+                            'camera_name': camera_name,
+                            'person_id':   None,
+                            'person_name': None,
+                            'authorized':  None,
+                            'confidence':  det.get('confidence', 0.99),
+                            'bbox_json':   det.get('bbox_json'),
+                            'face_count':  det.get('face_count', 1),
+                            'method':      'opencv',
+                            'timestamp':   datetime.now().isoformat(),
+                        })
+                    except Exception:
+                        pass
+                continue
+            if det['person_id'] is None:
+                _trigger_unknown_face_alert(camera_id, camera_name, det)
+            else:
+                auth = "✓ AUTHORIZED" if det.get('person_authorized') else "✗ UNAUTHORIZED"
+                print(f"👤 Detected: {det['person_name']} [{auth}] "
+                      f"confidence={det['confidence']:.2f}")
+            # Emit face detection event
+            if _sio:
+                try:
+                    _sio.emit('face_detected', {
+                        'camera_id':   camera_id,
+                        'camera_name': camera_name,
+                        'person_id':   det.get('person_id'),
+                        'person_name': det.get('person_name'),
+                        'authorized':  det.get('person_authorized'),
+                        'confidence':  det.get('confidence', 0),
+                        'bbox_json':   det.get('bbox_json'),
+                        'face_count':  det.get('face_count', 1),
+                        'method':      det.get('analysis_method', 'dlib'),
+                        'timestamp':   datetime.now().isoformat(),
+                    })
+                except Exception:
+                    pass
+
+    except Exception as e:
+        print(f"❌ Error in frame processing for camera {camera_id}: {e}")
+    finally:
+        try:
+            Path(temp_frame_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def start_face_recognition_loop(camera_id: int, interval: int = 5):
     """
     Start background face recognition for a camera.
-    
+
     Args:
         camera_id: Camera ID from database
         interval: Processing interval in seconds (default: 5)
     """
     # Stop existing thread if running
     stop_face_recognition_loop(camera_id)
-    
+
     # Create stop flag
     stop_flag = threading.Event()
     _thread_stop_flags[camera_id] = stop_flag
-    
+
     def recognition_loop():
-        """Background thread function"""
+        """Background thread function."""
         if _local_analysis_active():
             print(f"🔍 Started local face analysis for camera {camera_id} (interval: {interval}s)")
         else:
             print(f"🔍 Started face recognition for camera {camera_id} (interval: {interval}s)")
-        
-        # Import here to avoid circular dependency
+
         try:
             from recorder import CameraRecorder
             recorder = CameraRecorder()
@@ -956,109 +1113,71 @@ def start_face_recognition_loop(camera_id: int, interval: int = 5):
             print(f"❌ Cannot start face recognition for camera {camera_id}: {e}")
             return
 
-        # Import object detector (graceful — will no-op if ultralytics missing)
         try:
             from object_detector import detect_objects as _detect_objects
         except Exception:
             _detect_objects = None
-        
+
         while not stop_flag.is_set():
             try:
-                # Get camera info
                 conn = get_db()
                 camera = conn.execute(
                     "SELECT id, name, rtsp_url, type FROM cameras WHERE id=? AND enabled=1",
                     (camera_id,)
                 ).fetchone()
                 conn.close()
-                
+
                 if not camera:
                     print(f"⚠️  Camera {camera_id} not found or disabled, stopping recognition")
                     break
-                
-                # Capture snapshot
+
+                # Skip this tick if the previous frame is still being processed.
+                # This prevents tasks from piling up when processing is slower than interval.
+                with _pending_futures_lock:
+                    prev = _pending_futures.get(camera_id)
+                    if prev is not None and not prev.done():
+                        stop_flag.wait(interval)
+                        continue
+
                 snapshot_data = recorder.capture_snapshot_by_camera_id(camera_id)
-                
+
                 if snapshot_data:
-                    # Save temporary frame
-                    temp_frame_path = DETECTIONS_DIR / f"temp_cam_{camera_id}.jpg"
+                    # Use a unique temp path per tick to avoid overwrite races
+                    temp_frame_path = DETECTIONS_DIR / f"temp_cam_{camera_id}_{time.monotonic_ns()}.jpg"
                     with open(temp_frame_path, 'wb') as f:
                         f.write(snapshot_data)
-                    
-                    # Process frame
-                    detections = process_camera_frame(camera_id, str(temp_frame_path))
 
-                    # ── Object detection on the same frame ───────────────
-                    if _detect_objects is not None:
-                        try:
-                            obj_results = _detect_objects(str(temp_frame_path))
-                            if obj_results:
-                                conn = get_db()
-                                for obj in obj_results:
-                                    conn.execute(
-                                        """INSERT INTO object_detections
-                                           (camera_id, class_name, confidence, bbox_json,
-                                            frame_width, frame_height, timestamp)
-                                           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
-                                        (
-                                            camera_id,
-                                            obj['class_name'],
-                                            obj['confidence'],
-                                            obj['bbox_json'],
-                                            obj.get('frame_width'),
-                                            obj.get('frame_height'),
-                                        )
-                                    )
-                                    print(f"📦 Object detected: {obj['class_name']} "
-                                          f"({obj['confidence']:.0%}) cam={camera_id}")
-                                conn.commit()
-                                conn.close()
-                        except Exception as _oe:
-                            print(f"⚠️  Object detection error cam {camera_id}: {_oe}")
-                    
-                    # Handle unknown faces (trigger alerts)
-                    for det in detections:
-                        if det.get('analysis_method') == 'opencv':
-                            print(
-                                f"🟩 Local face detected on camera {camera_id} "
-                                f"({det.get('face_count', 1)} face(s))"
-                            )
-                            continue
-                        if det['person_id'] is None:
-                            # Unknown face detected - trigger alert
-                            _trigger_unknown_face_alert(camera_id, camera['name'], det)
-                        else:
-                            # Known person detected
-                            auth = "✓ AUTHORIZED" if det.get('person_authorized') else "✗ UNAUTHORIZED"
-                            print(f"👤 Detected: {det['person_name']} [{auth}] confidence={det['confidence']:.2f}")
-                    
-                    # Clean up temp file
-                    temp_frame_path.unlink(missing_ok=True)
-                
+                    # Submit heavy processing to the shared thread pool
+                    with _pending_futures_lock:
+                        future = _frame_executor.submit(
+                            _process_and_handle,
+                            camera_id,
+                            camera['name'],
+                            str(temp_frame_path),
+                            _detect_objects,
+                        )
+                        _pending_futures[camera_id] = future
+
             except Exception as e:
                 print(f"❌ Error in face recognition loop for camera {camera_id}: {e}")
-            
-            # Wait for next interval
+
             stop_flag.wait(interval)
-        
+
         print(f"🛑 Stopped face recognition for camera {camera_id}")
-    
+
     # Start thread
     thread = threading.Thread(target=recognition_loop, daemon=True)
     thread.start()
     _face_recognition_threads[camera_id] = thread
 
 
-def stop_face_recognition_loop(camera_id: int):
-    """Stop face recognition loop for a camera"""
+def stop_face_recognition_loop(camera_id: int) -> None:
+    """Stop face recognition loop for a camera."""
     if camera_id in _thread_stop_flags:
         _thread_stop_flags[camera_id].set()
-        
-        # Wait for thread to finish (max 2 seconds)
         if camera_id in _face_recognition_threads:
             _face_recognition_threads[camera_id].join(timeout=2.0)
             del _face_recognition_threads[camera_id]
-        
         del _thread_stop_flags[camera_id]
         print(f"🛑 Stopped face recognition for camera {camera_id}")
 
@@ -1067,29 +1186,29 @@ def _trigger_unknown_face_alert(camera_id: int, camera_name: str, detection: dic
     """Trigger alert for unknown face detection"""
     try:
         conn = get_db()
-        
+
         # Create alert
         conn.execute(
-            """INSERT INTO alerts 
+            """INSERT INTO alerts
                (device_id, alert_type, severity, ai_score, video_file, timestamp)
                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
-            (f"camera_{camera_id}", "UNKNOWN_FACE", "MEDIUM", detection['confidence'], 
+            (f"camera_{camera_id}", "UNKNOWN_FACE", "MEDIUM", detection['confidence'],
              detection['snapshot_path'])
         )
-        
+
         # Mark detection as alert-created
         conn.execute(
-            """UPDATE face_detections 
-               SET alert_created=1 
+            """UPDATE face_detections
+               SET alert_created=1
                WHERE snapshot_path=?""",
             (detection['snapshot_path'],)
         )
-        
+
         conn.commit()
         conn.close()
-        
+
         print(f"⚠️  ALERT: Unknown face detected at {camera_name}")
-        
+
     except Exception as e:
         print(f"❌ Error triggering alert: {e}")
 
@@ -1102,7 +1221,7 @@ def get_person_detections(person_id: int, hours: int = 24) -> List[dict]:
     """Get detection history for a person"""
     conn = get_db()
     cutoff = datetime.now() - timedelta(hours=hours)
-    
+
     detections = conn.execute(
         """SELECT fd.*, c.name as camera_name, c.location
            FROM face_detections fd
@@ -1111,7 +1230,7 @@ def get_person_detections(person_id: int, hours: int = 24) -> List[dict]:
            ORDER BY fd.timestamp DESC""",
         (person_id, _to_db_datetime(cutoff))
     ).fetchall()
-    
+
     conn.close()
     return [dict(d) for d in detections]
 
@@ -1120,7 +1239,7 @@ def get_unknown_faces(hours: int = 24, limit: int = 50) -> List[dict]:
     """Get recent unknown face detections"""
     conn = get_db()
     cutoff = datetime.now() - timedelta(hours=hours)
-    
+
     detections = conn.execute(
         """SELECT fd.*, c.name as camera_name, c.location
            FROM face_detections fd
@@ -1130,7 +1249,7 @@ def get_unknown_faces(hours: int = 24, limit: int = 50) -> List[dict]:
            LIMIT ?""",
         (_to_db_datetime(cutoff), limit)
     ).fetchall()
-    
+
     conn.close()
     return [dict(d) for d in detections]
 
