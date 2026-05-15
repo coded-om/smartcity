@@ -1,39 +1,39 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  RadialBarChart, RadialBar, Legend,
+  RadialBarChart, RadialBar,
 } from 'recharts';
 import {
-  FiThermometer, FiDroplet, FiWind, FiMic, FiMove, FiCpu,
-  FiAlertTriangle, FiCheckCircle, FiRadio, FiCamera, FiRefreshCw,
-} from 'react-icons/fi';
+  Thermometer, Droplets, Wind, Mic, Move, Cpu,
+  Radio, Camera,
+} from 'lucide-react';
 import Hls from 'hls.js';
 import { apiFetch, getApiBase, getHlsStreamUrl } from '../apiBase';
-import { cn, severityBg, alertTypeIcon, formatRelative } from '../lib/utils';
+import { cn, alertTypeIcon } from '../lib/utils';
 
 const SENSOR_META = [
-  { key: 'temperature', label: 'Temperature', unit: '°C',  Icon: FiThermometer, warnAt: 35,   critAt: 55,   max: 80,   color: '#ef4444' },
-  { key: 'humidity',    label: 'Humidity',    unit: '%',   Icon: FiDroplet,     warnAt: 70,   critAt: 90,   max: 100,  color: '#3b82f6' },
-  { key: 'gas',         label: 'Gas (MQ-2)',  unit: '',    Icon: FiWind,        warnAt: 2100, critAt: 3000, max: 4095, color: '#f97316' },
-  { key: 'mic',         label: 'Microphone',  unit: '',    Icon: FiMic,         warnAt: 800,  critAt: 3500, max: 4095, color: '#a855f7' },
+  { key: 'temperature', label: 'Temperature', unit: '\u00b0C',  Icon: Thermometer, warnAt: 35,   critAt: 55,   max: 80,   color: '#e56b6f' },
+  { key: 'humidity',    label: 'Humidity',    unit: '%',   Icon: Droplets,     warnAt: 70,   critAt: 90,   max: 100,  color: '#355070' },
+  { key: 'gas',         label: 'Gas (MQ-2)',  unit: '',    Icon: Wind,         warnAt: 2100, critAt: 3000, max: 4095, color: '#eaac8b' },
+  { key: 'mic',         label: 'Microphone',  unit: '',    Icon: Mic,          warnAt: 800,  critAt: 3500, max: 4095, color: '#6d597a' },
 ];
 
-const HISTORY_MAX = 60; // data points kept per sensor
+const HISTORY_MAX = 60;
 
 function SensorGauge({ meta, value }) {
   const { label, unit, Icon, warnAt, critAt, max, color } = meta;
   const pct     = Math.min(100, Math.round(((value || 0) / max) * 100));
   const isDanger = value >= critAt;
   const isWarn   = !isDanger && value >= warnAt;
-  const gaugeColor = isDanger ? '#ef4444' : isWarn ? '#f59e0b' : color;
+  const gaugeColor = isDanger ? '#b56576' : isWarn ? '#eaac8b' : color;
 
   const data = [{ name: label, value: pct, fill: gaugeColor }];
 
   return (
     <div className={cn(
       'bg-surface-600 border rounded-2xl p-4 flex flex-col items-center transition-all',
-      isDanger ? 'border-red-500/40 shadow-glow-red' :
-      isWarn   ? 'border-amber-500/40 shadow-glow-amber' : 'border-surface-500',
+      isDanger ? 'border-accent-500/40 shadow-glow-accent' :
+      isWarn   ? 'border-coral-500/40 shadow-glow-coral' : 'border-surface-500',
     )}>
       <div className="relative w-28 h-28">
         <RadialBarChart
@@ -41,12 +41,12 @@ function SensorGauge({ meta, value }) {
           cx={56} cy={56}
           innerRadius={36} outerRadius={50}
           startAngle={90} endAngle={-270}
-          data={[{ value: 100, fill: '#1e2a3f' }, { value: pct, fill: gaugeColor }]}
+          data={[{ value: 100, fill: '#1a1932' }, { value: pct, fill: gaugeColor }]}
         >
           <RadialBar dataKey="value" cornerRadius={6} />
         </RadialBarChart>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <Icon style={{ color: gaugeColor }} className="text-sm mb-0.5" />
+          <Icon size={13} style={{ color: gaugeColor }} className="mb-0.5" />
           <p className="text-white text-xs font-bold leading-none">
             {value !== undefined && value !== null ? `${value}${unit}` : '—'}
           </p>
@@ -55,8 +55,8 @@ function SensorGauge({ meta, value }) {
       <p className="text-slate-400 text-xs mt-1">{label}</p>
       <span className={cn(
         'text-[10px] font-bold px-2 py-0.5 rounded-full mt-1',
-        isDanger ? 'bg-red-500/20 text-red-300' :
-        isWarn   ? 'bg-amber-500/20 text-amber-300' : 'bg-green-500/20 text-green-300',
+        isDanger ? 'bg-accent-500/20 text-accent-300' :
+        isWarn   ? 'bg-coral-500/20 text-coral-300' : 'bg-emerald-500/20 text-emerald-300',
       )}>
         {isDanger ? 'CRITICAL' : isWarn ? 'WARNING' : 'NORMAL'}
       </span>
@@ -79,7 +79,7 @@ function CustomTooltip({ active, payload, label }) {
 function DevicePanel({ device }) {
   const [reading,  setReading]  = useState(null);
   const [history,  setHistory]  = useState([]);
-  const [camState, setCamState] = useState('idle'); // idle | loading | ok | error
+  const [camState, setCamState] = useState('idle');
   const [diagOpen, setDiagOpen] = useState(false);
   const [diag,     setDiag]     = useState(null);
   const videoRef = useRef(null);
@@ -87,7 +87,6 @@ function DevicePanel({ device }) {
 
   const devId = device.device_id;
 
-  // Poll latest reading
   useEffect(() => {
     const fetch = async () => {
       try {
@@ -107,7 +106,6 @@ function DevicePanel({ device }) {
     return () => clearInterval(t);
   }, [devId]);
 
-  // HLS camera setup
   useEffect(() => {
     const url = getHlsStreamUrl(devId);
     if (!url || !videoRef.current) return;
@@ -141,10 +139,10 @@ function DevicePanel({ device }) {
 
   return (
     <div className="bg-surface-700 border border-surface-500 rounded-2xl overflow-hidden">
-      {/* Device header */}
+      {}
       <div className="flex items-center justify-between px-5 py-3 border-b border-surface-500 bg-surface-800">
         <div className="flex items-center gap-3">
-          <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', online ? 'bg-emerald-400 animate-pulse' : 'bg-red-500')} />
+          <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', online ? 'bg-emerald-400 animate-pulse' : 'bg-accent-500')} />
           <div>
             <p className="text-white font-semibold text-sm">{devId}</p>
             <p className="text-slate-500 text-xs">{device.location || 'Unknown'}</p>
@@ -152,11 +150,11 @@ function DevicePanel({ device }) {
         </div>
         <div className="flex items-center gap-2">
           {reading?.alert_type && reading.alert_type !== 'NORMAL' && (
-            <span className="text-sm">{alertTypeIcon(reading.alert_type)}</span>
+            <div className="shrink-0">{alertTypeIcon(reading.alert_type)}</div>
           )}
           <span className={cn(
             'text-[10px] font-bold px-2 py-0.5 rounded-full border',
-            online ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-red-500/20 text-red-300 border-red-500/30',
+            online ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-accent-500/20 text-accent-300 border-accent-500/30',
           )}>
             {online ? 'ONLINE' : 'OFFLINE'}
           </span>
@@ -164,39 +162,39 @@ function DevicePanel({ device }) {
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Sensor gauges */}
+        {}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {SENSOR_META.map(meta => (
             <SensorGauge key={meta.key} meta={meta} value={reading?.[meta.key]} />
           ))}
         </div>
 
-        {/* Motion + AI score row */}
+        {}
         <div className="grid grid-cols-2 gap-3">
           <div className={cn(
             'flex items-center gap-3 rounded-xl p-3 border',
-            reading?.motion ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-surface-600 border-surface-500',
+            reading?.motion ? 'bg-bronze-500/10 border-bronze-500/30' : 'bg-surface-600 border-surface-500',
           )}>
-            <FiMove className={reading?.motion ? 'text-yellow-400 text-xl' : 'text-slate-500 text-xl'} />
+            <Move size={20} className={reading?.motion ? 'text-bronze-400' : 'text-slate-500'} />
             <div>
               <p className="text-slate-400 text-xs">Motion</p>
-              <p className={cn('text-sm font-bold', reading?.motion ? 'text-yellow-300' : 'text-slate-300')}>
+              <p className={cn('text-sm font-bold', reading?.motion ? 'text-bronze-300' : 'text-slate-300')}>
                 {reading?.motion ? 'Detected' : 'Clear'}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3 bg-surface-600 border border-surface-500 rounded-xl p-3">
-            <FiCpu className="text-purple-400 text-xl" />
+            <Cpu size={20} className="text-secondary-300" />
             <div>
               <p className="text-slate-400 text-xs">AI Score</p>
-              <p className="text-sm font-bold text-purple-300">
+              <p className="text-sm font-bold text-secondary-200">
                 {reading?.ai_score != null ? reading.ai_score.toFixed(4) : 'Training…'}
               </p>
             </div>
           </div>
         </div>
 
-        {/* Trend chart */}
+        {}
         {history.length >= 3 && (
           <div>
             <p className="text-xs text-slate-500 mb-2">Live Trends (last {history.length} readings)</p>
@@ -206,21 +204,21 @@ function DevicePanel({ device }) {
                   <XAxis dataKey="t" tick={false} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Line type="monotone" dataKey="temperature" stroke="#ef4444" dot={false} strokeWidth={1.5} name="Temp" />
-                  <Line type="monotone" dataKey="humidity"    stroke="#3b82f6" dot={false} strokeWidth={1.5} name="Humid" />
-                  <Line type="monotone" dataKey="gas"         stroke="#f97316" dot={false} strokeWidth={1.5} name="Gas" />
-                  <Line type="monotone" dataKey="mic"         stroke="#a855f7" dot={false} strokeWidth={1.5} name="Mic" />
+                  <Line type="monotone" dataKey="temperature" stroke="#e56b6f" dot={false} strokeWidth={1.5} name="Temp" />
+                  <Line type="monotone" dataKey="humidity"    stroke="#355070" dot={false} strokeWidth={1.5} name="Humid" />
+                  <Line type="monotone" dataKey="gas"         stroke="#eaac8b" dot={false} strokeWidth={1.5} name="Gas" />
+                  <Line type="monotone" dataKey="mic"         stroke="#6d597a" dot={false} strokeWidth={1.5} name="Mic" />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
         )}
 
-        {/* Camera panel */}
+        {}
         <div className="border border-surface-500 rounded-xl overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2 bg-surface-800 border-b border-surface-500">
             <div className="flex items-center gap-2 text-slate-400 text-sm">
-              <FiCamera /> Camera Feed
+              <Camera size={14} /> Camera Feed
             </div>
             <button onClick={loadDiagnostics} className="text-xs text-slate-500 hover:text-white transition-colors">
               Diagnostics
@@ -230,7 +228,7 @@ function DevicePanel({ device }) {
             <video ref={videoRef} className="w-full bg-black" muted playsInline controls style={{ maxHeight: 240 }} />
           ) : (
             <div className="bg-black/60 flex flex-col items-center justify-center py-10 gap-2">
-              <FiCamera className="text-slate-600 text-3xl" />
+              <Camera size={30} className="text-slate-600" />
               <p className="text-slate-600 text-xs">
                 {camState === 'loading' ? 'Connecting to camera…' : 'No camera configured'}
               </p>
@@ -265,8 +263,6 @@ function DevicePanel({ device }) {
   );
 }
 
-// --- Main component ----------------------------------------------------------
-
 function LiveMonitor({ devices }) {
   const [selectedId, setSelectedId] = useState(null);
 
@@ -276,7 +272,7 @@ function LiveMonitor({ devices }) {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      {/* Device filter tabs */}
+      {}
       {allDevices.length > 1 && (
         <div className="flex flex-wrap gap-2">
           <button
@@ -297,7 +293,7 @@ function LiveMonitor({ devices }) {
                 selectedId === d.device_id ? 'bg-primary-500/20 text-primary-300 border-primary-500/30' : 'bg-surface-600 text-slate-400 border-surface-500 hover:text-white',
               )}
             >
-              <span className={cn('w-2 h-2 rounded-full shrink-0', d.online ? 'bg-emerald-400' : 'bg-red-500')} />
+              <span className={cn('w-2 h-2 rounded-full shrink-0', d.online ? 'bg-emerald-400' : 'bg-accent-500')} />
               {d.device_id}
             </button>
           ))}
@@ -306,7 +302,7 @@ function LiveMonitor({ devices }) {
 
       {displayed.length === 0 ? (
         <div className="text-center py-20 text-slate-500">
-          <FiRadio className="text-5xl mx-auto mb-4 text-slate-600" />
+          <Radio size={44} className="mx-auto mb-4 text-slate-600" />
           <p>No devices found</p>
         </div>
       ) : (

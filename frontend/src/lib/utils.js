@@ -1,3 +1,5 @@
+import React from 'react';
+import { Flame, Wind, Zap, AlertOctagon, AlertTriangle, CheckCircle } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -7,30 +9,30 @@ export function cn(...inputs) {
 
 export function severityColor(severity) {
   switch (severity) {
-    case 'CRITICAL': return 'text-red-400';
-    case 'HIGH':     return 'text-orange-400';
-    case 'MEDIUM':   return 'text-yellow-400';
-    default:         return 'text-green-400';
+    case 'CRITICAL': return 'text-accent-400';
+    case 'HIGH':     return 'text-coral-400';
+    case 'MEDIUM':   return 'text-bronze-400';
+    default:         return 'text-emerald-400';
   }
 }
 
 export function severityBg(severity) {
   switch (severity) {
-    case 'CRITICAL': return 'bg-red-500/20 border-red-500/40 text-red-300';
-    case 'HIGH':     return 'bg-orange-500/20 border-orange-500/40 text-orange-300';
-    case 'MEDIUM':   return 'bg-yellow-500/20 border-yellow-500/40 text-yellow-300';
-    default:         return 'bg-green-500/20 border-green-500/40 text-green-300';
+    case 'CRITICAL': return 'bg-accent-500/20 border-accent-500/40 text-accent-300';
+    case 'HIGH':     return 'bg-coral-500/20 border-coral-500/40 text-coral-300';
+    case 'MEDIUM':   return 'bg-bronze-500/20 border-bronze-500/40 text-bronze-300';
+    default:         return 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300';
   }
 }
 
 export function alertTypeIcon(type) {
   switch (type) {
-    case 'FIRE':      return '🔥';
-    case 'GAS_LEAK':  return '☁️';
-    case 'EXPLOSION': return '💥';
-    case 'INTRUDER':  return '🚨';
-    case 'ANOMALY':   return '⚠️';
-    default:          return '✅';
+    case 'FIRE':      return <Flame size={16} className="text-red-400" />;
+    case 'GAS_LEAK':  return <Wind size={16} className="text-yellow-400" />;
+    case 'EXPLOSION': return <Zap size={16} className="text-orange-400" />;
+    case 'INTRUDER':  return <AlertOctagon size={16} className="text-accent-400" />;
+    case 'ANOMALY':   return <AlertTriangle size={16} className="text-bronze-400" />;
+    default:          return <CheckCircle size={16} className="text-emerald-400" />;
   }
 }
 

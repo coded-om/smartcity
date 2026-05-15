@@ -1,8 +1,3 @@
-"""
-routes/persons.py — person registration, metadata management, and photo serving.
-
-Blueprint prefix: /api
-"""
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file
@@ -13,9 +8,6 @@ from state import FACE_RECOGNITION_ENABLED, fre
 bp = Blueprint('persons', __name__)
 
 _UPDATABLE_FIELDS = ('name', 'employee_id', 'role', 'department', 'notes', 'authorized')
-
-
-# ── List / create ─────────────────────────────────────────────────────────────
 
 @bp.route('/api/persons', methods=['GET'])
 def get_persons():
@@ -32,7 +24,6 @@ def get_persons():
         return jsonify({'success': False, 'error': str(exc)}), 500
     finally:
         conn.close()
-
 
 @bp.route('/api/persons', methods=['POST'])
 def create_person():
@@ -61,15 +52,11 @@ def create_person():
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 500
 
-
-# ── Update / delete ───────────────────────────────────────────────────────────
-
 @bp.route('/api/persons/<int:person_id>', methods=['PATCH'])
 def update_person(person_id):
     conn = get_db()
     try:
         if 'photo' in request.files:
-            # Re-register with fresh photo (delete old row first)
             conn.execute("DELETE FROM persons WHERE id=?", (person_id,))
             conn.commit()
             ok, msg, new_id = fre.register_person(
@@ -102,7 +89,6 @@ def update_person(person_id):
     finally:
         conn.close()
 
-
 @bp.route('/api/persons/<int:person_id>', methods=['DELETE'])
 def delete_person(person_id):
     conn = get_db()
@@ -128,9 +114,6 @@ def delete_person(person_id):
         return jsonify({'success': False, 'error': str(exc)}), 500
     finally:
         conn.close()
-
-
-# ── Photo ─────────────────────────────────────────────────────────────────────
 
 @bp.route('/api/persons/<int:person_id>/photo')
 def get_person_photo(person_id):

@@ -4,36 +4,36 @@ import {
   PieChart, Pie, Legend,
 } from 'recharts';
 import {
-  FiCpu, FiActivity, FiAlertTriangle, FiCheckCircle, FiZap,
-  FiRefreshCw, FiTrendingUp, FiTrendingDown, FiArrowUp, FiArrowDown,
-} from 'react-icons/fi';
+  Cpu, AlertTriangle, CheckCircle, Zap,
+  RefreshCw, TrendingUp, TrendingDown, Clock,
+} from 'lucide-react';
 import { apiFetch } from '../apiBase';
-import { cn, severityBg, alertTypeIcon } from '../lib/utils';
+import { cn, severityBg } from '../lib/utils';
 
 const SEVERITY_COLORS = {
-  CRITICAL: '#ef4444',
-  HIGH:     '#f97316',
-  MEDIUM:   '#eab308',
-  LOW:      '#22c55e',
+  CRITICAL: '#b56576',
+  HIGH:     '#e56b6f',
+  MEDIUM:   '#eaac8b',
+  LOW:      '#10b981',
 };
 
 const TYPE_COLORS = {
-  FIRE:      '#ef4444',
-  GAS_LEAK:  '#f97316',
-  EXPLOSION: '#a855f7',
-  INTRUDER:  '#eab308',
-  ANOMALY:   '#06b6d4',
-  NORMAL:    '#22c55e',
+  FIRE:      '#e56b6f',
+  GAS_LEAK:  '#eaac8b',
+  EXPLOSION: '#b56576',
+  INTRUDER:  '#6d597a',
+  ANOMALY:   '#355070',
+  NORMAL:    '#10b981',
 };
 
 function StatCard({ icon: Icon, label, value, sub, colorClass }) {
   return (
-    <div className="flex items-center gap-4 bg-surface-600 rounded-2xl p-5 border border-surface-500">
-      <div className={cn('flex items-center justify-center w-12 h-12 rounded-xl text-xl', colorClass)}>
-        <Icon />
+    <div className="flex items-center gap-4 bg-surface-600 rounded-2xl p-5 border border-surface-500 hover:shadow-card-hover transition-shadow">
+      <div className={cn('flex items-center justify-center w-12 h-12 rounded-xl', colorClass)}>
+        <Icon size={22} />
       </div>
       <div>
-        <p className="text-slate-500 text-xs font-medium uppercase tracking-wide">{label}</p>
+        <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">{label}</p>
         <p className="text-white text-2xl font-bold mt-0.5">{value}</p>
         {sub && <p className="text-slate-500 text-xs mt-0.5">{sub}</p>}
       </div>
@@ -54,9 +54,9 @@ function HourlyHeatmap({ data }) {
         const intensity = count / maxCount;
         const bg = count === 0
           ? 'bg-surface-700'
-          : intensity > 0.75 ? 'bg-red-500'
-          : intensity > 0.5  ? 'bg-orange-500'
-          : intensity > 0.25 ? 'bg-yellow-500'
+          : intensity > 0.75 ? 'bg-accent-500'
+          : intensity > 0.5  ? 'bg-coral-500'
+          : intensity > 0.25 ? 'bg-bronze-500'
           : 'bg-primary-500';
         return (
           <div key={hour} title={`${hour}:00 — ${count} alerts`}
@@ -72,13 +72,13 @@ function HourlyHeatmap({ data }) {
 }
 
 function RiskGauge({ deviceId, score, totalAlerts }) {
-  const color = score >= 75 ? '#ef4444' : score >= 40 ? '#f59e0b' : '#22c55e';
+  const color = score >= 75 ? '#b56576' : score >= 40 ? '#eaac8b' : '#10b981';
   return (
     <div className="bg-surface-700 border border-surface-500 rounded-xl p-4 text-center">
       <p className="text-xs text-slate-400 mb-2 truncate">{deviceId}</p>
       <div className="relative inline-flex items-center justify-center w-20 h-20 mb-2">
         <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
-          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1e2a3f" strokeWidth="3.8" />
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1a1932" strokeWidth="3.8" />
           <circle cx="18" cy="18" r="15.9" fill="none"
             stroke={color} strokeWidth="3.8"
             strokeDasharray={`${score} 100`} strokeLinecap="round" />
@@ -99,8 +99,6 @@ function CustomTooltip({ active, payload, label }) {
     </div>
   );
 }
-
-// --- Main component ----------------------------------------------------------
 
 function AIAnalysis({ devices, models, alerts }) {
   const [analytics, setAnalytics] = useState(null);
@@ -145,27 +143,27 @@ function AIAnalysis({ devices, models, alerts }) {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* KPI row */}
+      {}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={FiAlertTriangle} label="Total Alerts"   value={totalAlerts}    colorClass="bg-orange-500/10 text-orange-400" />
-        <StatCard icon={FiZap}           label="Critical"        value={criticalCount}  colorClass="bg-red-500/10 text-red-400" />
-        <StatCard icon={FiCpu}           label="AI Anomalies"    value={anomalyCount}   colorClass="bg-purple-500/10 text-purple-400" />
-        <StatCard icon={FiCheckCircle}   label="Resolved"        value={resolvedCount}  sub={`${totalAlerts - resolvedCount} open`} colorClass="bg-emerald-500/10 text-emerald-400" />
+        <StatCard icon={AlertTriangle} label="Total Alerts"  value={totalAlerts}   colorClass="bg-coral-500/10 text-coral-400" />
+        <StatCard icon={Zap}           label="Critical"       value={criticalCount} colorClass="bg-accent-500/10 text-accent-400" />
+        <StatCard icon={Cpu}           label="AI Anomalies"   value={anomalyCount}  colorClass="bg-secondary-500/10 text-secondary-300" />
+        <StatCard icon={CheckCircle}   label="Resolved"       value={resolvedCount} sub={`${totalAlerts - resolvedCount} open`} colorClass="bg-emerald-500/10 text-emerald-400" />
       </div>
 
-      {/* 24h Trend Banner */}
+      {}
       {trend && (
         <div className={cn(
           'flex items-center gap-4 rounded-2xl p-4 border',
           (trend.change_pct || 0) >= 0
-            ? 'bg-red-950/30 border-red-700/30'
+            ? 'bg-accent-900/30 border-accent-700/30'
             : 'bg-emerald-950/30 border-emerald-700/30',
         )}>
           {(trend.change_pct || 0) >= 0
-            ? <FiTrendingUp className="text-red-400 text-2xl shrink-0" />
-            : <FiTrendingDown className="text-emerald-400 text-2xl shrink-0" />}
+            ? <TrendingUp size={22} className="text-accent-400 shrink-0" />
+            : <TrendingDown size={22} className="text-emerald-400 shrink-0" />}
           <div>
-            <p className={cn('font-bold', (trend.change_pct || 0) >= 0 ? 'text-red-300' : 'text-emerald-300')}>
+            <p className={cn('font-bold', (trend.change_pct || 0) >= 0 ? 'text-accent-300' : 'text-emerald-300')}>
               {Math.abs(trend.change_pct || 0)}% {(trend.change_pct || 0) >= 0 ? 'more' : 'fewer'} alerts than yesterday
             </p>
             <p className="text-slate-500 text-sm">
@@ -175,9 +173,9 @@ function AIAnalysis({ devices, models, alerts }) {
         </div>
       )}
 
-      {/* Charts row */}
+      {}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Alert type bar chart */}
+        {}
         <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-surface-500">
             <h3 className="text-white font-semibold">Alert Type Distribution</h3>
@@ -200,7 +198,7 @@ function AIAnalysis({ devices, models, alerts }) {
           </div>
         </div>
 
-        {/* Severity pie chart */}
+        {}
         <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-surface-500">
             <h3 className="text-white font-semibold">Severity Breakdown</h3>
@@ -222,7 +220,7 @@ function AIAnalysis({ devices, models, alerts }) {
         </div>
       </div>
 
-      {/* Hourly heatmap */}
+      {}
       <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-surface-500">
           <h3 className="text-white font-semibold">Hourly Alert Heatmap (last 7 days)</h3>
@@ -233,7 +231,7 @@ function AIAnalysis({ devices, models, alerts }) {
         </div>
       </div>
 
-      {/* Device risk gauges */}
+      {}
       {analytics?.risk_scores && Object.keys(analytics.risk_scores).length > 0 && (
         <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-surface-500">
@@ -247,7 +245,7 @@ function AIAnalysis({ devices, models, alerts }) {
         </div>
       )}
 
-      {/* Recent event clusters */}
+      {}
       {analytics?.recent_clusters?.length > 0 && (
         <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-surface-500">
@@ -274,12 +272,12 @@ function AIAnalysis({ devices, models, alerts }) {
         </div>
       )}
 
-      {/* Models & Training */}
+      {}
       <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-surface-500">
           <h3 className="text-white font-semibold">AI Models</h3>
           <button onClick={loadAnalytics} className="text-slate-400 hover:text-white transition-colors">
-            <FiRefreshCw className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
         <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -288,11 +286,11 @@ function AIAnalysis({ devices, models, alerts }) {
             const state     = training[device.device_id];
             return (
               <div key={device.device_id} className="bg-surface-700 border border-surface-500 rounded-xl p-4 flex items-center gap-4">
-                <FiCpu className={cn('text-2xl shrink-0', isTrained ? 'text-purple-400' : 'text-slate-600')} />
+                <Cpu size={22} className={cn('shrink-0', isTrained ? 'text-secondary-300' : 'text-slate-600')} />
                 <div className="flex-1 min-w-0">
                   <p className="text-white text-sm font-semibold truncate">{device.device_id}</p>
                   <p className={cn('text-xs mt-0.5', isTrained ? 'text-emerald-400' : 'text-yellow-400')}>
-                    {isTrained ? '✅ Model trained' : '⏳ Needs training (100 readings min)'}
+                    <span className="flex items-center gap-1">{isTrained ? <><CheckCircle size={12} /> Model trained</> : <><Clock size={12} /> Needs training (100 readings min)</>}</span>
                   </p>
                 </div>
                 <button

@@ -4,7 +4,7 @@
 .app {
   display: flex;
   min-height: 100vh;
-  background: #0f1117;
+  background: rgb(var(--body-bg));
 }
 
 /* On mobile the sidebar is a fixed overlay, main content fills full width */
@@ -14,7 +14,7 @@
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: #0f1117;
+  background: rgb(var(--body-bg));
 }
 
 /* Content scroll area */

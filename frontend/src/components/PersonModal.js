@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FiX, FiUpload, FiCheckCircle, FiAlertCircle, FiLoader, FiUser } from 'react-icons/fi';
+import { X, Upload, CheckCircle, AlertCircle, Loader2, User, Info } from 'lucide-react';
 import { apiFetch, getPersonPhotoUrl } from '../apiBase';
 import { cn } from '../lib/utils';
 
@@ -32,7 +32,6 @@ export default function PersonModal({ person, onClose, onSave }) {
         authorized: person.authorized !== 0,
         notes: person.notes || '',
       });
-      // Load existing photo if available
       if (person.id) {
         setPhotoPreview(getPersonPhotoUrl(person.id));
       }
@@ -80,7 +79,6 @@ export default function PersonModal({ person, onClose, onSave }) {
     setPhotoFile(file);
     setErrors(prev => ({ ...prev, photo: null }));
 
-    // Create preview
     const reader = new FileReader();
     reader.onload = (e) => {
       setPhotoPreview(e.target.result);
@@ -139,7 +137,6 @@ export default function PersonModal({ person, onClose, onSave }) {
       const res = await apiFetch(url, {
         method,
         body: formDataToSend,
-        // Don't set Content-Type header - browser will set it with boundary for multipart
       });
 
       const data = await res.json();
@@ -160,26 +157,26 @@ export default function PersonModal({ person, onClose, onSave }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="bg-surface-800 rounded-xl border border-surface-600 w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header */}
+        {}
         <div className="flex items-center justify-between p-6 border-b border-surface-600">
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <FiUser className="text-primary-400" />
+            <User size={20} className="text-primary-400" />
             {isEdit ? 'Edit Person' : 'Register New Person'}
           </h2>
           <button
             onClick={onClose}
             className="p-2 rounded-lg hover:bg-surface-700 text-slate-400 hover:text-white transition-colors"
           >
-            <FiX />
+            <X size={18} />
           </button>
         </div>
 
-        {/* Form */}
+        {}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
-          {/* Photo Upload */}
+          {}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">
-              Photo {!isEdit && <span className="text-red-400">*</span>}
+              Photo {!isEdit && <span className="text-accent-400">*</span>}
             </label>
             
             <div
@@ -193,7 +190,7 @@ export default function PersonModal({ person, onClose, onSave }) {
                 dragActive
                   ? 'border-primary-500 bg-primary-500/10'
                   : errors.photo
-                  ? 'border-red-500 bg-red-500/5'
+                  ? 'border-accent-500 bg-accent-500/5'
                   : 'border-surface-600 hover:border-primary-700 bg-surface-900'
               )}
             >
@@ -205,13 +202,13 @@ export default function PersonModal({ person, onClose, onSave }) {
                     className="w-48 h-48 object-cover rounded-lg border-2 border-surface-600"
                   />
                   <div className="flex items-center gap-2 text-emerald-400 text-sm">
-                    <FiCheckCircle />
+                    <CheckCircle size={14} />
                     Photo selected - Click to change
                   </div>
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-3 text-slate-500">
-                  <FiUpload className="text-4xl" />
+                  <Upload size={36} className="text-slate-500" />
                   <div>
                     <p className="text-sm font-medium">
                       Drop photo here or click to browse
@@ -233,24 +230,24 @@ export default function PersonModal({ person, onClose, onSave }) {
             </div>
 
             {errors.photo && (
-              <div className="flex items-center gap-2 text-red-400 text-sm mt-2">
-                <FiAlertCircle />
+              <div className="flex items-center gap-2 text-accent-400 text-sm mt-2">
+                <AlertCircle size={14} />
                 {errors.photo}
               </div>
             )}
 
             {!isEdit && (
-              <p className="text-slate-500 text-xs mt-2">
-                ℹ️ Photo will be used for face recognition. Ensure face is clearly visible and well-lit.
+              <p className="text-slate-500 text-xs mt-2 flex items-center gap-1">
+                <Info size={12} /> Photo will be used for face recognition. Ensure face is clearly visible and well-lit.
               </p>
             )}
           </div>
 
           <div className="grid grid-cols-2 gap-5">
-            {/* Name */}
+            {}
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
-                Full Name <span className="text-red-400">*</span>
+                Full Name <span className="text-accent-400">*</span>
               </label>
               <input
                 type="text"
@@ -259,16 +256,16 @@ export default function PersonModal({ person, onClose, onSave }) {
                 placeholder="Ahmed Al-Mutairi"
                 className={cn(
                   'w-full px-4 py-2 rounded-lg bg-surface-900 border text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500',
-                  errors.name ? 'border-red-500' : 'border-surface-600'
+                  errors.name ? 'border-accent-500' : 'border-surface-600'
                 )}
               />
-              {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
+              {errors.name && <p className="text-accent-400 text-xs mt-1">{errors.name}</p>}
             </div>
 
-            {/* Employee ID */}
+            {}
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
-                Employee ID <span className="text-red-400">*</span>
+                Employee ID <span className="text-accent-400">*</span>
               </label>
               <input
                 type="text"
@@ -277,15 +274,15 @@ export default function PersonModal({ person, onClose, onSave }) {
                 placeholder="EMP-001"
                 className={cn(
                   'w-full px-4 py-2 rounded-lg bg-surface-900 border text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500',
-                  errors.employee_id ? 'border-red-500' : 'border-surface-600'
+                  errors.employee_id ? 'border-accent-500' : 'border-surface-600'
                 )}
               />
-              {errors.employee_id && <p className="text-red-400 text-xs mt-1">{errors.employee_id}</p>}
+              {errors.employee_id && <p className="text-accent-400 text-xs mt-1">{errors.employee_id}</p>}
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-5">
-            {/* Role */}
+            {}
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
                 Role
@@ -307,7 +304,7 @@ export default function PersonModal({ person, onClose, onSave }) {
               </select>
             </div>
 
-            {/* Department */}
+            {}
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
                 Department
@@ -322,7 +319,7 @@ export default function PersonModal({ person, onClose, onSave }) {
             </div>
           </div>
 
-          {/* Authorized Toggle */}
+          {}
           <div>
             <label className="flex items-center justify-between p-4 rounded-lg bg-surface-900 border border-surface-600 cursor-pointer hover:border-primary-700 transition-colors">
               <div>
@@ -331,7 +328,7 @@ export default function PersonModal({ person, onClose, onSave }) {
                   {formData.authorized ? (
                     <span className="text-emerald-400 text-xs">✓ Authorized</span>
                   ) : (
-                    <span className="text-red-400 text-xs">⚠ Unauthorized</span>
+                    <span className="text-accent-400 text-xs">⚠ Unauthorized</span>
                   )}
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
@@ -350,7 +347,7 @@ export default function PersonModal({ person, onClose, onSave }) {
             </label>
           </div>
 
-          {/* Notes */}
+          {}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">
               Notes
@@ -365,7 +362,7 @@ export default function PersonModal({ person, onClose, onSave }) {
           </div>
         </form>
 
-        {/* Footer */}
+        {}
         <div className="flex items-center justify-end gap-3 p-6 border-t border-surface-600">
           <button
             type="button"
@@ -379,7 +376,7 @@ export default function PersonModal({ person, onClose, onSave }) {
             disabled={saving}
             className="flex items-center gap-2 px-6 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 disabled:bg-primary-800 text-white font-medium transition-colors"
           >
-            {saving && <FiLoader className="animate-spin" />}
+            {saving && <Loader2 size={14} className="animate-spin" />}
             {isEdit ? 'Save Changes' : 'Register Person'}
           </button>
         </div>

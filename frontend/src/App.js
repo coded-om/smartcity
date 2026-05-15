@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { FiRefreshCw } from 'react-icons/fi';
+import { Loader2 } from 'lucide-react';
+import { SonnerToaster } from './components/ui/sonner-toaster';
 
 import Sidebar       from './components/Sidebar';
 import Header        from './components/Header';
@@ -29,12 +30,25 @@ function App() {
   const [alerts,  setAlerts]  = useState([]);
   const [models,  setModels]  = useState([]);
   const [loading, setLoading] = useState(true);
+  const [theme,   setTheme]   = useState(() => localStorage.getItem('theme') || 'dark');
+
+  useEffect(() => {
+    const html = document.documentElement;
+    if (theme === 'dark') {
+      html.classList.add('dark');
+    } else {
+      html.classList.remove('dark');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
 
   useEffect(() => {
     let controller = new AbortController();
 
     const fetchAll = async () => {
-      controller.abort();               // cancel any in-flight requests
+      controller.abort();
       controller = new AbortController();
       const { signal } = controller;
 
@@ -69,15 +83,15 @@ function App() {
 
   const handleNavChange = (view) => {
     setActiveView(view);
-    setSidebarOpen(false); // close drawer on mobile after navigation
+    setSidebarOpen(false);
   };
 
   const renderView = () => {
     if (loading) {
       return (
         <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-400">
-          <FiRefreshCw className="animate-spin text-5xl text-blue-500" />
-          <p className="text-lg">Loading system data...</p>
+          <Loader2 className="animate-spin text-primary-400" size={48} />
+          <p className="text-lg font-medium">Loading system data…</p>
         </div>
       );
     }
@@ -97,14 +111,7 @@ function App() {
 
   return (
     <div className="app">
-      {/* Mobile backdrop */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/60 z-20 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
+      <SonnerToaster />
       <Sidebar
         activeView={activeView}
         setActiveView={handleNavChange}
@@ -120,6 +127,8 @@ function App() {
           stats={stats}
           alerts={alerts}
           onMenuClick={() => setSidebarOpen(prev => !prev)}
+          theme={theme}
+          toggleTheme={toggleTheme}
         />
         <div className="content-area">
           <ThreatMonitor

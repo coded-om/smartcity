@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FiX, FiCheckCircle, FiAlertCircle, FiLoader } from 'react-icons/fi';
+import { X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { apiFetch } from '../apiBase';
 import { cn } from '../lib/utils';
 
@@ -43,11 +43,9 @@ export default function CameraModal({ camera, onClose, onSave }) {
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    // Clear error for this field
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: null }));
     }
-    // Clear test result when URL changes
     if (field === 'rtsp_url' || field === 'type') {
       setTestResult(null);
     }
@@ -88,7 +86,6 @@ export default function CameraModal({ camera, onClose, onSave }) {
     setTestResult(null);
 
     try {
-      // For edit mode, test existing camera
       if (isEdit) {
         const res = await apiFetch(`/cameras/${camera.id}/test`);
         const data = await res.json();
@@ -97,8 +94,6 @@ export default function CameraModal({ camera, onClose, onSave }) {
           message: data.success ? 'Connection successful!' : (data.error || 'Connection failed'),
         });
       } else {
-        // For new camera, we could add a test endpoint that accepts URL
-        // For now, just validate URL format
         setTestResult({
           success: true,
           message: 'URL format valid. Test connection after saving.',
@@ -156,7 +151,7 @@ export default function CameraModal({ camera, onClose, onSave }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="bg-surface-800 rounded-xl border border-surface-600 w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header */}
+        {}
         <div className="flex items-center justify-between p-6 border-b border-surface-600">
           <h2 className="text-xl font-bold text-white">
             {isEdit ? 'Edit Camera' : 'Add New Camera'}
@@ -165,16 +160,16 @@ export default function CameraModal({ camera, onClose, onSave }) {
             onClick={onClose}
             className="p-2 rounded-lg hover:bg-surface-700 text-slate-400 hover:text-white transition-colors"
           >
-            <FiX />
+            <X size={18} />
           </button>
         </div>
 
-        {/* Form */}
+        {}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
-          {/* Name */}
+          {}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">
-              Camera Name <span className="text-red-400">*</span>
+              Camera Name <span className="text-accent-400">*</span>
             </label>
             <input
               type="text"
@@ -183,13 +178,13 @@ export default function CameraModal({ camera, onClose, onSave }) {
               placeholder="e.g., Main Entrance Camera"
               className={cn(
                 'w-full px-4 py-2 rounded-lg bg-surface-900 border text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500',
-                errors.name ? 'border-red-500' : 'border-surface-600'
+                errors.name ? 'border-accent-500' : 'border-surface-600'
               )}
             />
-            {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
+            {errors.name && <p className="text-accent-400 text-xs mt-1">{errors.name}</p>}
           </div>
 
-          {/* Type */}
+          {}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">
               Camera Type
@@ -205,10 +200,10 @@ export default function CameraModal({ camera, onClose, onSave }) {
             </select>
           </div>
 
-          {/* RTSP URL / IP */}
+          {}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">
-              {formData.type === 'RTSP' ? 'RTSP URL' : 'IP Address'} <span className="text-red-400">*</span>
+              {formData.type === 'RTSP' ? 'RTSP URL' : 'IP Address'} <span className="text-accent-400">*</span>
             </label>
             <input
               type="text"
@@ -221,12 +216,12 @@ export default function CameraModal({ camera, onClose, onSave }) {
               }
               className={cn(
                 'w-full px-4 py-2 rounded-lg bg-surface-900 border text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500',
-                errors.rtsp_url ? 'border-red-500' : 'border-surface-600'
+                errors.rtsp_url ? 'border-accent-500' : 'border-surface-600'
               )}
             />
-            {errors.rtsp_url && <p className="text-red-400 text-xs mt-1">{errors.rtsp_url}</p>}
+            {errors.rtsp_url && <p className="text-accent-400 text-xs mt-1">{errors.rtsp_url}</p>}
             
-            {/* Test button */}
+            {}
             <div className="flex items-center gap-3 mt-2">
               <button
                 type="button"
@@ -234,23 +229,23 @@ export default function CameraModal({ camera, onClose, onSave }) {
                 disabled={testing || !formData.rtsp_url.trim()}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-700 hover:bg-surface-600 disabled:bg-surface-900 text-slate-300 disabled:text-slate-600 text-sm font-medium transition-colors"
               >
-                {testing && <FiLoader className="animate-spin" />}
+                {testing && <Loader2 size={14} className="animate-spin" />}
                 Test Connection
               </button>
 
               {testResult && (
                 <div className={cn(
                   'flex items-center gap-2 text-sm',
-                  testResult.success ? 'text-emerald-400' : 'text-red-400'
+                  testResult.success ? 'text-emerald-400' : 'text-accent-400'
                 )}>
-                  {testResult.success ? <FiCheckCircle /> : <FiAlertCircle />}
+                  {testResult.success ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
                   {testResult.message}
                 </div>
               )}
             </div>
           </div>
 
-          {/* Device Association */}
+          {}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">
               Associated Device (Optional)
@@ -265,7 +260,7 @@ export default function CameraModal({ camera, onClose, onSave }) {
             <p className="text-slate-500 text-xs mt-1">Link camera to an ESP32 zone for correlation</p>
           </div>
 
-          {/* Location */}
+          {}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">
               Location Description
@@ -279,7 +274,7 @@ export default function CameraModal({ camera, onClose, onSave }) {
             />
           </div>
 
-          {/* GPS Coordinates */}
+          {}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
@@ -292,10 +287,10 @@ export default function CameraModal({ camera, onClose, onSave }) {
                 placeholder="24.7136"
                 className={cn(
                   'w-full px-4 py-2 rounded-lg bg-surface-900 border text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500',
-                  errors.lat ? 'border-red-500' : 'border-surface-600'
+                  errors.lat ? 'border-accent-500' : 'border-surface-600'
                 )}
               />
-              {errors.lat && <p className="text-red-400 text-xs mt-1">{errors.lat}</p>}
+              {errors.lat && <p className="text-accent-400 text-xs mt-1">{errors.lat}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
@@ -308,14 +303,14 @@ export default function CameraModal({ camera, onClose, onSave }) {
                 placeholder="46.6753"
                 className={cn(
                   'w-full px-4 py-2 rounded-lg bg-surface-900 border text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500',
-                  errors.lng ? 'border-red-500' : 'border-surface-600'
+                  errors.lng ? 'border-accent-500' : 'border-surface-600'
                 )}
               />
-              {errors.lng && <p className="text-red-400 text-xs mt-1">{errors.lng}</p>}
+              {errors.lng && <p className="text-accent-400 text-xs mt-1">{errors.lng}</p>}
             </div>
           </div>
 
-          {/* Toggle options */}
+          {}
           <div className="space-y-3 pt-4 border-t border-surface-600">
             <label className="flex items-center justify-between p-3 rounded-lg bg-surface-900 border border-surface-600 cursor-pointer hover:border-primary-700 transition-colors">
               <div>
@@ -358,7 +353,7 @@ export default function CameraModal({ camera, onClose, onSave }) {
           </div>
         </form>
 
-        {/* Footer */}
+        {}
         <div className="flex items-center justify-end gap-3 p-6 border-t border-surface-600">
           <button
             type="button"
@@ -372,7 +367,7 @@ export default function CameraModal({ camera, onClose, onSave }) {
             disabled={saving}
             className="flex items-center gap-2 px-6 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 disabled:bg-primary-800 text-white font-medium transition-colors"
           >
-            {saving && <FiLoader className="animate-spin" />}
+            {saving && <Loader2 size={14} className="animate-spin" />}
             {isEdit ? 'Save Changes' : 'Add Camera'}
           </button>
         </div>

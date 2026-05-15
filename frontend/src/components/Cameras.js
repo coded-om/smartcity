@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  FiCamera, FiPlus, FiEdit2, FiTrash2, FiEyeOff,
-  FiWifi, FiWifiOff, FiMapPin, FiRefreshCw, FiGrid, FiList,
-} from 'react-icons/fi';
-import { BsShieldCheck } from 'react-icons/bs';
+  Camera, Plus, Edit2, Trash2, EyeOff,
+  Wifi, WifiOff, MapPin, RefreshCw, LayoutGrid, List, ShieldCheck, AlertTriangle,
+} from 'lucide-react';
 import { apiFetch } from '../apiBase';
 import { cn } from '../lib/utils';
 import CameraModal from './CameraModal';
@@ -64,14 +63,13 @@ function LiveFeed({ camera, onDetectionMetadata }) {
   const [latestDetection, setLatestDetection] = useState(null);
   const [overlayBoxes, setOverlayBoxes] = useState([]);
   const [objectBoxes, setObjectBoxes] = useState([]);
-  const [threatAlert, setThreatAlert] = useState(null);   // real-time threat from WebSocket
+  const [threatAlert, setThreatAlert] = useState(null);
   const threatTimerRef = useRef(null);
   const imgRef = useRef(null);
   const canvasRef = useRef(null);
   const streamNonceRef = useRef(Date.now());
   const streamUrl = `/api/cameras/${camera.id}/mjpeg?fps=5&t=${streamNonceRef.current}`;
 
-  // WebSocket listeners for instant face + threat events
   useEffect(() => {
     let cancelled = false;
     getSocket().then((sock) => {
@@ -114,7 +112,6 @@ function LiveFeed({ camera, onDetectionMetadata }) {
     return () => { cancelled = true; clearTimeout(threatTimerRef.current); };
   }, [camera.id, onDetectionMetadata]);
 
-  // Reset error state when camera changes
   useEffect(() => {
     setStreamError(false);
     setLoading(true);
@@ -178,7 +175,6 @@ function LiveFeed({ camera, onDetectionMetadata }) {
     loadLatestDetection();
     const iv = setInterval(loadLatestDetection, 2000);
 
-    // Object detection polling (independent)
     let objCancelled = false;
     const loadObjects = async () => {
       try {
@@ -208,7 +204,7 @@ function LiveFeed({ camera, onDetectionMetadata }) {
   const detectionAgeMs = latestDetection?.timestamp
     ? Math.abs(Date.now() - parseDbTimestamp(latestDetection.timestamp))
     : Number.MAX_SAFE_INTEGER;
-  const detectionFresh = detectionAgeMs <= 15_000;  // 15-second freshness window
+  const detectionFresh = detectionAgeMs <= 15_000;
   const faceCount = latestDetection?.face_count || overlayBoxes.length;
   const isKnown = Boolean(latestDetection?.person_id);
   const isAuthorized = latestDetection?.person_authorized === 1;
@@ -260,13 +256,11 @@ function LiveFeed({ camera, onDetectionMetadata }) {
       h: Math.max(0, Math.min(1, box.bottom - box.top)) * renderHeight,
     });
 
-    // ── Face detection boxes ──────────────────────────────────────────────
     if (detectionFresh && overlayBoxes.length > 0) {
       const isFR = analysisMethod === 'face_recognition';
       overlayBoxes.forEach((box, index) => {
         const { x, y, w, h } = toCanvas(box);
 
-        // Determine colour: green=authorized, amber=unauthorized, red=unknown, cyan=opencv
         let strokeColor, shadowColor, labelBg, labelText;
         if (!isFR) {
           strokeColor = '#22c55e'; shadowColor = 'rgba(34,197,94,0.85)';
@@ -290,7 +284,6 @@ function LiveFeed({ camera, onDetectionMetadata }) {
         ctx.strokeRect(x, y, w, h);
         ctx.shadowBlur = 0;
 
-        // Build label text
         let topLabel, subLabel;
         if (!isFR) {
           topLabel = `FACE ${index + 1}`;
@@ -335,7 +328,6 @@ function LiveFeed({ camera, onDetectionMetadata }) {
       });
     }
 
-    // ── Object detection boxes ────────────────────────────────────────────
     const OBJ_AGE_LIMIT = 15000;
     const freshObjects = objectBoxes.filter(ob => {
       const age = Math.abs(Date.now() - (parseDbTimestamp(ob.timestamp) || 0));
@@ -383,7 +375,6 @@ function LiveFeed({ camera, onDetectionMetadata }) {
       ctx.fillText(label, lx + 7, ly + 14);
       ctx.restore();
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detectionFresh, overlayBoxes, objectBoxes, latestDetection, analysisMethod, isKnown, isAuthorized]);
 
   useEffect(() => {
@@ -395,14 +386,13 @@ function LiveFeed({ camera, onDetectionMetadata }) {
   if (!online || !camera.enabled) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 gap-2">
-        <FiCamera className="text-3xl" />
+        <Camera size={28} className="text-slate-600" />
         <span className="text-xs">OFFLINE</span>
       </div>
     );
   }
 
   if (streamError) {
-    // Fallback: snapshot every 3s
     return <SnapshotFeed camera={camera} />;
   }
 
@@ -410,7 +400,7 @@ function LiveFeed({ camera, onDetectionMetadata }) {
     <>
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-surface-900 z-10">
-          <FiRefreshCw className="text-2xl text-slate-500 animate-spin" />
+          <RefreshCw size={20} className="text-slate-500 animate-spin" />
         </div>
       )}
       <img
@@ -464,7 +454,7 @@ function LiveFeed({ camera, onDetectionMetadata }) {
         </div>
       )}
 
-      {/* ── Real-time threat alert badge (WebSocket) ─────────────────── */}
+      {}
       {threatAlert && (
         <div className={cn(
           'absolute top-2 left-2 right-2 px-3 py-2 rounded-lg border shadow-xl backdrop-blur-sm z-30',
@@ -476,7 +466,7 @@ function LiveFeed({ camera, onDetectionMetadata }) {
         )}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs font-bold truncate animate-pulse">
-              🚨 {(threatAlert.threat_type || '').replace(/_/g, ' ')}
+              <AlertTriangle size={12} className="inline shrink-0" /> {(threatAlert.threat_type || '').replace(/_/g, ' ')}
               {threatAlert.weapon_class ? ` · ${threatAlert.weapon_class.toUpperCase()}` : ''}
             </p>
             <span className="text-[10px] shrink-0 opacity-80">
@@ -517,14 +507,14 @@ function SnapshotFeed({ camera }) {
     <>
       {loading && !snapshot && (
         <div className="absolute inset-0 flex items-center justify-center bg-surface-900 z-10">
-          <FiRefreshCw className="text-2xl text-slate-500 animate-spin" />
+          <RefreshCw size={20} className="text-slate-500 animate-spin" />
         </div>
       )}
       {snapshot
         ? <img src={snapshot} alt={camera.name} className="w-full h-full object-contain bg-black" />
         : !loading && (
           <div className="flex flex-col items-center justify-center w-full h-full gap-2 text-slate-600">
-            <FiCamera className="text-3xl" />
+            <Camera size={28} className="text-slate-600" />
           </div>
         )
       }
@@ -560,48 +550,48 @@ function CameraCard({ camera, onEdit, onDelete }) {
       'bg-surface-800 rounded-xl border transition-all overflow-hidden flex flex-col',
       online ? 'border-surface-600 hover:border-primary-700' : 'border-red-900/50'
     )}>
-      {/* Live video feed */}
+      {}
       <div className="relative h-48 bg-surface-900 flex items-center justify-center overflow-hidden">
         <LiveFeed camera={camera} onDetectionMetadata={setDetectionMeta} />
         
-        {/* Status indicator - top left */}
+        {}
         <div className={cn(
           'absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-bold border z-20',
           online 
             ? 'bg-emerald-900/80 text-emerald-300 border-emerald-500/50' 
-            : 'bg-red-900/80 text-red-300 border-red-500/50'
+            : 'bg-accent-900/80 text-accent-300 border-accent-500/50'
         )}>
-          {online ? <FiWifi className="text-[10px]" /> : <FiWifiOff className="text-[10px]" />}
+          {online ? <Wifi size={9} /> : <WifiOff size={9} />}
           {online ? 'LIVE' : 'OFFLINE'}
         </div>
 
-        {/* FR Status Badge - top right */}
+        {}
         <div className={cn(
           'absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold border z-20 transition-all',
           localAnalysisOn
             ? hasFaceBoxes
               ? 'bg-emerald-900/85 text-emerald-200 border-emerald-500/60'
-              : 'bg-blue-900/80 text-blue-300 border-blue-500/50'
+              : 'bg-primary-900/80 text-primary-300 border-primary-500/50'
             : 'bg-slate-900/80 text-slate-400 border-slate-600/50'
         )}>
-          <BsShieldCheck className="text-[10px]" />
+          <ShieldCheck size={9} />
           {localAnalysisOn ? 'LOCAL AI' : 'AI OFF'}
         </div>
 
-        {/* Disabled overlay */}
+        {}
         {!camera.enabled && (
           <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-20">
             <div className="flex items-center gap-2 text-slate-400">
-              <FiEyeOff />
+              <EyeOff size={16} />
               <span className="text-sm font-bold">DISABLED</span>
             </div>
           </div>
         )}
       </div>
 
-      {/* Card content */}
+      {}
       <div className="p-4 flex flex-col flex-1">
-        {/* Title & Location */}
+        {}
         <div className="mb-3">
           <h3 className={cn(
             'font-semibold text-sm truncate',
@@ -611,13 +601,13 @@ function CameraCard({ camera, onEdit, onDelete }) {
           </h3>
           {camera.location && (
             <p className="text-slate-500 text-xs mt-0.5 flex items-center gap-1 truncate">
-              <FiMapPin className="shrink-0 text-[10px]" />
+              <MapPin size={9} className="shrink-0" />
               {camera.location}
             </p>
           )}
         </div>
 
-        {/* Detection Statistics - New */}
+        {}
         {camera.face_recognition_enabled && (
           <div className="mb-3 p-3 bg-emerald-950/20 rounded-xl border border-emerald-500/15">
             <div className="flex items-center justify-between gap-2 mb-3">
@@ -638,12 +628,12 @@ function CameraCard({ camera, onEdit, onDelete }) {
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              {/* Detection Count */}
+              {}
               <div>
                 <p className="text-[10px] text-slate-400 uppercase tracking-wide">Events</p>
                 <p className="text-sm font-bold text-white">{detectionMeta.detectionCount}</p>
               </div>
-              {/* Last Detection */}
+              {}
               <div>
                 <p className="text-[10px] text-slate-400 uppercase tracking-wide">Last scan</p>
                 {hasRecentDetection ? (
@@ -656,7 +646,7 @@ function CameraCard({ camera, onEdit, onDelete }) {
               </div>
             </div>
 
-            {/* Analysis summary */}
+            {}
             {hasRecentDetection && detectionMeta.latestDetection && (
               <div className="mt-2 pt-2 border-t border-surface-600">
                 <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Current analysis</p>
@@ -676,27 +666,27 @@ function CameraCard({ camera, onEdit, onDelete }) {
           </div>
         )}
 
-        {/* Device association */}
+        {}
         {camera.device_id && (
           <div className="mt-auto pt-2 px-2 py-1 rounded bg-surface-900 border border-surface-600 text-xs text-slate-400">
             Device: <span className="text-slate-300 font-medium">{camera.device_id}</span>
           </div>
         )}
 
-        {/* Actions */}
+        {}
         <div className="flex gap-2 mt-3">
           <button
             onClick={() => onEdit(camera)}
             className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-surface-700 hover:bg-surface-600 text-slate-300 hover:text-white text-sm font-medium transition-colors border border-surface-600"
           >
-            <FiEdit2 className="text-xs" />
+            <Edit2 size={12} />
             Edit
           </button>
           <button
             onClick={() => onDelete(camera)}
-            className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-900/20 hover:bg-red-900/40 text-red-400 hover:text-red-300 text-sm font-medium transition-colors border border-red-700/30"
+            className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-accent-900/20 hover:bg-accent-900/40 text-accent-400 hover:text-accent-300 text-sm font-medium transition-colors border border-accent-700/30"
           >
-            <FiTrash2 className="text-xs" />
+            <Trash2 size={12} />
           </button>
         </div>
       </div>
@@ -711,7 +701,7 @@ function CameraRow({ camera, onEdit, onDelete }) {
       <td className="py-3 px-4">
         <div className={cn(
           'w-2 h-2 rounded-full',
-          online ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' : 'bg-red-500'
+          online ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' : 'bg-accent-500'
         )} />
       </td>
       <td className="py-3 px-4">
@@ -748,13 +738,13 @@ function CameraRow({ camera, onEdit, onDelete }) {
             onClick={() => onEdit(camera)}
             className="p-2 rounded-lg bg-surface-700 hover:bg-surface-600 text-slate-300 hover:text-white transition-colors"
           >
-            <FiEdit2 className="text-sm" />
+            <Edit2 size={14} />
           </button>
           <button
             onClick={() => onDelete(camera)}
-            className="p-2 rounded-lg bg-red-900/20 hover:bg-red-900/40 text-red-400 hover:text-red-300 transition-colors"
+            className="p-2 rounded-lg bg-accent-900/20 hover:bg-accent-900/40 text-accent-400 hover:text-accent-300 transition-colors"
           >
-            <FiTrash2 className="text-sm" />
+            <Trash2 size={14} />
           </button>
         </div>
       </td>
@@ -765,7 +755,7 @@ function CameraRow({ camera, onEdit, onDelete }) {
 export default function Cameras() {
   const [cameras, setCameras] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'list'
+  const [viewMode, setViewMode] = useState('grid');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCamera, setEditingCamera] = useState(null);
 
@@ -785,7 +775,6 @@ export default function Cameras() {
 
   useEffect(() => {
     loadCameras();
-    // Refresh every 30 seconds
     const interval = setInterval(loadCameras, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -825,7 +814,7 @@ export default function Cameras() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-400">
-        <FiRefreshCw className="animate-spin text-5xl text-blue-500" />
+        <RefreshCw size={40} className="animate-spin text-primary-400" />
         <p className="text-lg">Loading cameras...</p>
       </div>
     );
@@ -833,11 +822,11 @@ export default function Cameras() {
 
   return (
     <div className="space-y-6 p-6">
-      {/* Header */}
+      {}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-            <FiCamera className="text-primary-400" />
+            <Camera size={20} className="text-primary-400" />
             Cameras
           </h1>
           <p className="text-slate-500 text-sm mt-1">
@@ -846,7 +835,7 @@ export default function Cameras() {
         </div>
         
         <div className="flex gap-2">
-          {/* View toggle */}
+          {}
           <div className="flex rounded-lg bg-surface-800 border border-surface-600 p-1">
             <button
               onClick={() => setViewMode('grid')}
@@ -857,7 +846,7 @@ export default function Cameras() {
                   : 'text-slate-400 hover:text-white'
               )}
             >
-              <FiGrid />
+              <LayoutGrid size={15} />
             </button>
             <button
               onClick={() => setViewMode('list')}
@@ -868,37 +857,37 @@ export default function Cameras() {
                   : 'text-slate-400 hover:text-white'
               )}
             >
-              <FiList />
+              <List size={15} />
             </button>
           </div>
 
-          {/* Add button */}
+          {}
           <button
             onClick={handleAdd}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-white font-medium transition-colors"
           >
-            <FiPlus />
+            <Plus size={15} />
             Add Camera
           </button>
         </div>
       </div>
 
-      {/* Empty state */}
+      {}
       {cameras.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-          <FiCamera className="text-6xl mb-4 text-slate-700" />
+          <Camera size={48} className="mb-4 text-slate-700" />
           <p className="text-lg font-medium mb-2">No cameras configured</p>
           <p className="text-sm mb-6">Add your first camera to start monitoring</p>
           <button
             onClick={handleAdd}
             className="flex items-center gap-2 px-6 py-3 rounded-lg bg-primary-600 hover:bg-primary-500 text-white font-medium transition-colors"
           >
-            <FiPlus />
+            <Plus size={15} />
             Add Camera
           </button>
         </div>
       ) : viewMode === 'grid' ? (
-        /* Grid view */
+        
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {cameras.map(camera => (
             <CameraCard
@@ -910,7 +899,7 @@ export default function Cameras() {
           ))}
         </div>
       ) : (
-        /* List view */
+        
         <div className="bg-surface-800 rounded-xl border border-surface-600 overflow-hidden">
           <table className="w-full">
             <thead className="bg-surface-900 border-b border-surface-700">
@@ -937,7 +926,7 @@ export default function Cameras() {
         </div>
       )}
 
-      {/* Camera Modal */}
+      {}
       {modalOpen && (
         <CameraModal
           camera={editingCamera}

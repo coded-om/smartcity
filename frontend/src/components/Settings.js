@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
-  FiSettings, FiCamera, FiUsers, FiBell, FiPlus, FiEdit2, FiTrash2,
-  FiRefreshCw, FiSearch, FiUser,
-} from 'react-icons/fi';
+  Settings as SettingsIcon, Camera, Users, Bell, Plus, Edit2, Trash2,
+  RefreshCw, Search, User,
+} from 'lucide-react';
 import { apiFetch, getPersonPhotoUrl } from '../apiBase';
 import { cn } from '../lib/utils';
 import Cameras from './Cameras';
@@ -19,7 +19,7 @@ function TabButton({ active, onClick, icon: Icon, label }) {
           : 'text-slate-400 hover:text-white hover:bg-surface-700 border border-transparent'
       )}
     >
-      <Icon className="text-base" />
+      <Icon size={16} />
       {label}
     </button>
   );
@@ -98,7 +98,7 @@ function PersonManagementTab() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-        <FiRefreshCw className="animate-spin text-5xl text-blue-500 mb-4" />
+        <RefreshCw size={18} className="animate-spin text-primary-400 mb-4" />
         <p className="text-lg">Loading persons...</p>
       </div>
     );
@@ -106,11 +106,11 @@ function PersonManagementTab() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-3">
-            <FiUsers className="text-primary-400" />
+            <Users size={20} className="text-primary-400" />
             Person Management
           </h2>
           <p className="text-slate-500 text-sm mt-1">
@@ -122,14 +122,14 @@ function PersonManagementTab() {
           onClick={handleAdd}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-white font-medium transition-colors"
         >
-          <FiPlus />
+          <Plus size={16} />
           Register Person
         </button>
       </div>
 
-      {/* Search */}
+      {}
       <div className="relative">
-        <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+        <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
         <input
           type="text"
           value={searchQuery}
@@ -139,27 +139,27 @@ function PersonManagementTab() {
         />
       </div>
 
-      {/* Empty state */}
+      {}
       {persons.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-          <FiUser className="text-6xl mb-4 text-slate-700" />
+          <User size={42} className="mb-4 text-slate-700" />
           <p className="text-lg font-medium mb-2">No persons registered</p>
           <p className="text-sm mb-6">Register employees for face recognition</p>
           <button
             onClick={handleAdd}
             className="flex items-center gap-2 px-6 py-3 rounded-lg bg-primary-600 hover:bg-primary-500 text-white font-medium transition-colors"
           >
-            <FiPlus />
+            <Plus size={16} />
             Register Person
           </button>
         </div>
       ) : filteredPersons.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-          <FiSearch className="text-6xl mb-4 text-slate-700" />
+          <Search size={42} className="mb-4 text-slate-700" />
           <p className="text-lg font-medium">No matching persons found</p>
         </div>
       ) : (
-        /* Table */
+        
         <div className="bg-surface-800 rounded-xl border border-surface-600 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -190,7 +190,7 @@ function PersonManagementTab() {
                             }}
                           />
                         ) : (
-                          <FiUser className="text-slate-600 text-xl" />
+                          <User size={22} className="text-slate-600" />
                         )}
                       </div>
                     </td>
@@ -214,7 +214,7 @@ function PersonManagementTab() {
                           Authorized
                         </span>
                       ) : (
-                        <span className="px-2 py-1 rounded text-xs font-bold bg-red-900/20 text-red-300 border border-red-700/30">
+                        <span className="px-2 py-1 rounded text-xs font-bold bg-accent-900/20 text-accent-300 border border-accent-700/30">
                           Unauthorized
                         </span>
                       )}
@@ -226,14 +226,14 @@ function PersonManagementTab() {
                           className="p-2 rounded-lg bg-surface-700 hover:bg-surface-600 text-slate-300 hover:text-white transition-colors"
                           title="Edit"
                         >
-                          <FiEdit2 className="text-sm" />
+                          <Edit2 size={14} />
                         </button>
                         <button
                           onClick={() => handleDelete(person)}
-                          className="p-2 rounded-lg bg-red-900/20 hover:bg-red-900/40 text-red-400 hover:text-red-300 transition-colors"
+                          className="p-2 rounded-lg bg-accent-900/20 hover:bg-accent-900/40 text-accent-400 hover:text-accent-300 transition-colors"
                           title="Delete"
                         >
-                          <FiTrash2 className="text-sm" />
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </td>
@@ -245,7 +245,7 @@ function PersonManagementTab() {
         </div>
       )}
 
-      {/* Person Modal */}
+      {}
       {modalOpen && (
         <PersonModal
           person={editingPerson}
@@ -275,7 +275,6 @@ function AlertThresholdsTab() {
 
   const handleSave = async () => {
     setSaving(true);
-    // Simulate save - in real app would POST to /api/settings/thresholds
     await new Promise(resolve => setTimeout(resolve, 1000));
     setLastSaved(new Date());
     setSaving(false);
@@ -285,7 +284,7 @@ function AlertThresholdsTab() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <h2 className="text-xl font-bold text-white flex items-center gap-3">
-          <FiBell className="text-primary-400" />
+          <Bell size={20} className="text-primary-400" />
           Alert Thresholds
         </h2>
         <p className="text-slate-500 text-sm mt-1">
@@ -294,7 +293,7 @@ function AlertThresholdsTab() {
       </div>
 
       <div className="space-y-6">
-        {/* Temperature */}
+        {}
         <div className="p-6 bg-surface-800 rounded-xl border border-surface-600">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -302,7 +301,7 @@ function AlertThresholdsTab() {
               <p className="text-slate-500 text-sm">Alert when temperature exceeds this value</p>
             </div>
             <div className="text-right">
-              <p className="text-2xl font-bold text-orange-400">{thresholds.temperature}°C</p>
+              <p className="text-2xl font-bold text-coral-400">{thresholds.temperature}°C</p>
             </div>
           </div>
           <input
@@ -311,7 +310,7 @@ function AlertThresholdsTab() {
             max="50"
             value={thresholds.temperature}
             onChange={(e) => handleChange('temperature', parseInt(e.target.value))}
-            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
+            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-coral-500"
           />
           <div className="flex justify-between text-xs text-slate-600 mt-2">
             <span>25°C</span>
@@ -319,7 +318,7 @@ function AlertThresholdsTab() {
           </div>
         </div>
 
-        {/* Gas */}
+        {}
         <div className="p-6 bg-surface-800 rounded-xl border border-surface-600">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -327,7 +326,7 @@ function AlertThresholdsTab() {
               <p className="text-slate-500 text-sm">Alert when gas level exceeds this value</p>
             </div>
             <div className="text-right">
-              <p className="text-2xl font-bold text-amber-400">{thresholds.gas} ppm</p>
+              <p className="text-2xl font-bold text-bronze-400">{thresholds.gas} ppm</p>
             </div>
           </div>
           <input
@@ -337,7 +336,7 @@ function AlertThresholdsTab() {
             step="100"
             value={thresholds.gas}
             onChange={(e) => handleChange('gas', parseInt(e.target.value))}
-            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-amber-500"
+            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-bronze-500"
           />
           <div className="flex justify-between text-xs text-slate-600 mt-2">
             <span>1000 ppm</span>
@@ -345,7 +344,7 @@ function AlertThresholdsTab() {
           </div>
         </div>
 
-        {/* Humidity */}
+        {}
         <div className="p-6 bg-surface-800 rounded-xl border border-surface-600">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -353,7 +352,7 @@ function AlertThresholdsTab() {
               <p className="text-slate-500 text-sm">Alert when humidity exceeds this value</p>
             </div>
             <div className="text-right">
-              <p className="text-2xl font-bold text-blue-400">{thresholds.humidity}%</p>
+              <p className="text-2xl font-bold text-primary-300">{thresholds.humidity}%</p>
             </div>
           </div>
           <input
@@ -362,7 +361,7 @@ function AlertThresholdsTab() {
             max="90"
             value={thresholds.humidity}
             onChange={(e) => handleChange('humidity', parseInt(e.target.value))}
-            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
           />
           <div className="flex justify-between text-xs text-slate-600 mt-2">
             <span>40%</span>
@@ -370,7 +369,7 @@ function AlertThresholdsTab() {
           </div>
         </div>
 
-        {/* Noise */}
+        {}
         <div className="p-6 bg-surface-800 rounded-xl border border-surface-600">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -378,7 +377,7 @@ function AlertThresholdsTab() {
               <p className="text-slate-500 text-sm">Alert when noise level exceeds this value</p>
             </div>
             <div className="text-right">
-              <p className="text-2xl font-bold text-purple-400">{thresholds.noise} dB</p>
+              <p className="text-2xl font-bold text-secondary-300">{thresholds.noise} dB</p>
             </div>
           </div>
           <input
@@ -387,7 +386,7 @@ function AlertThresholdsTab() {
             max="120"
             value={thresholds.noise}
             onChange={(e) => handleChange('noise', parseInt(e.target.value))}
-            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-secondary-500"
           />
           <div className="flex justify-between text-xs text-slate-600 mt-2">
             <span>50 dB</span>
@@ -395,7 +394,7 @@ function AlertThresholdsTab() {
           </div>
         </div>
 
-        {/* Motion Sensitivity */}
+        {}
         <div className="p-6 bg-surface-800 rounded-xl border border-surface-600">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -403,7 +402,7 @@ function AlertThresholdsTab() {
               <p className="text-slate-500 text-sm">Adjust motion sensor sensitivity</p>
             </div>
             <div className="text-right">
-              <p className="text-2xl font-bold text-cyan-400">
+              <p className="text-2xl font-bold text-emerald-400">
                 {thresholds.motion_sensitivity}%
               </p>
             </div>
@@ -414,7 +413,7 @@ function AlertThresholdsTab() {
             max="100"
             value={thresholds.motion_sensitivity}
             onChange={(e) => handleChange('motion_sensitivity', parseInt(e.target.value))}
-            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
           />
           <div className="flex justify-between text-xs text-slate-600 mt-2">
             <span>Low</span>
@@ -424,7 +423,7 @@ function AlertThresholdsTab() {
         </div>
       </div>
 
-      {/* Save Button */}
+      {}
       <div className="flex items-center justify-between p-4 bg-surface-900 rounded-lg border border-surface-600">
         {lastSaved && (
           <p className="text-sm text-slate-500">
@@ -436,7 +435,7 @@ function AlertThresholdsTab() {
           disabled={saving}
           className="ml-auto flex items-center gap-2 px-6 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 disabled:bg-primary-800 text-white font-medium transition-colors"
         >
-          {saving && <FiRefreshCw className="animate-spin" />}
+          {saving && <RefreshCw size={14} className="animate-spin" />}
           Save Thresholds
         </button>
       </div>
@@ -449,11 +448,11 @@ export default function Settings() {
 
   return (
     <div className="space-y-6 p-6">
-      {/* Header */}
+      {}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-            <FiSettings className="text-primary-400" />
+            <SettingsIcon size={22} className="text-primary-400" />
             Settings
           </h1>
           <p className="text-slate-500 text-sm mt-1">
@@ -462,29 +461,29 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Tabs */}
+      {}
       <div className="flex gap-2 overflow-x-auto pb-2">
         <TabButton
           active={activeTab === 'cameras'}
           onClick={() => setActiveTab('cameras')}
-          icon={FiCamera}
+          icon={Camera}
           label="Cameras"
         />
         <TabButton
           active={activeTab === 'persons'}
           onClick={() => setActiveTab('persons')}
-          icon={FiUsers}
+          icon={Users}
           label="Person Management"
         />
         <TabButton
           active={activeTab === 'thresholds'}
           onClick={() => setActiveTab('thresholds')}
-          icon={FiBell}
+          icon={Bell}
           label="Alert Thresholds"
         />
       </div>
 
-      {/* Tab Content */}
+      {}
       <div className="mt-6">
         {activeTab === 'cameras' && <Cameras />}
         {activeTab === 'persons' && <PersonManagementTab />}

@@ -1,9 +1,3 @@
-"""
-routes/analytics.py — security analytics, sensor trends, report data,
-                      and face detection history / identity analytics.
-
-Blueprint prefix: /api
-"""
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
@@ -14,22 +8,16 @@ from state import fre
 
 bp = Blueprint('analytics', __name__)
 
-
-# ── Security analytics ────────────────────────────────────────────────────────
-
 @bp.route('/api/analytics/security')
 def analytics_security():
-    """?device_id=<id>"""
     device_id = request.args.get('device_id')
     try:
         return jsonify({'success': True, 'data': ai_engine.analyze_security_events(device_id)})
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 500
 
-
 @bp.route('/api/analytics/trends')
 def analytics_trends():
-    """?device_id=<id>&hours=<n>"""
     device_id = request.args.get('device_id')
     if not device_id:
         return jsonify({'success': False, 'error': 'device_id required'}), 400
@@ -39,19 +27,14 @@ def analytics_trends():
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 500
 
-
 @bp.route('/api/analytics/heatmap')
 def analytics_heatmap():
-    """?device_id=<id>"""
     device_id = request.args.get('device_id')
     try:
         result = ai_engine.analyze_security_events(device_id)
         return jsonify({'success': True, 'data': result.get('hourly_heatmap', [])})
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 500
-
-
-# ── Report ────────────────────────────────────────────────────────────────────
 
 @bp.route('/api/report/data')
 def report_data():
@@ -92,27 +75,17 @@ def report_data():
     finally:
         conn.close()
 
-
 @bp.route('/api/report/full')
 def report_full():
-    """
-    Comprehensive report endpoint.
-    ?from_date=YYYY-MM-DD&to_date=YYYY-MM-DD&camera_id=<id>
-
-    Returns everything needed for all 6 report types:
-      executive, threats, cameras, face_recognition, sensors, forensic
-    """
     from_date  = request.args.get('from_date', '')
     to_date    = request.args.get('to_date', '')
     camera_id  = request.args.get('camera_id', type=int)
 
-    # Build safe date range strings for SQLite
     dt_from = f"{from_date} 00:00:00" if from_date else '1970-01-01 00:00:00'
     dt_to   = f"{to_date} 23:59:59"   if to_date   else datetime.now().strftime('%Y-%m-%d 23:59:59')
 
     conn = get_db()
     try:
-        # ── KPI summary ──────────────────────────────────────────────────────
         total_alerts    = conn.execute(
             "SELECT COUNT(*) FROM alerts WHERE timestamp BETWEEN ? AND ?",
             (dt_from, dt_to)).fetchone()[0]
@@ -153,14 +126,12 @@ def report_full():
                 " AND od.camera_id = ?" if camera_id else ""),
             [dt_from, dt_to] + (cam_filter_params if camera_id else [])).fetchone()[0]
 
-        # ── Alerts list ──────────────────────────────────────────────────────
         alerts = [dict(r) for r in conn.execute(
             "SELECT id, device_id, timestamp, alert_type, severity, ai_score, resolved, notes"
             " FROM alerts WHERE timestamp BETWEEN ? AND ?"
             " ORDER BY timestamp DESC LIMIT 500",
             (dt_from, dt_to)).fetchall()]
 
-        # ── Alert type breakdown ─────────────────────────────────────────────
         alert_type_rows = conn.execute(
             "SELECT alert_type, COUNT(*) as cnt FROM alerts"
             " WHERE timestamp BETWEEN ? AND ? GROUP BY alert_type ORDER BY cnt DESC",
@@ -173,7 +144,6 @@ def report_full():
             (dt_from, dt_to)).fetchall()
         severity_counts = {r['severity']: r['cnt'] for r in severity_rows}
 
-        # ── Hourly alert distribution (for chart) ────────────────────────────
         hourly_rows = conn.execute(
             "SELECT strftime('%H', timestamp) as hr, COUNT(*) as cnt"
             " FROM alerts WHERE timestamp BETWEEN ? AND ?"
@@ -181,7 +151,6 @@ def report_full():
             (dt_from, dt_to)).fetchall()
         hourly_alerts = {r['hr']: r['cnt'] for r in hourly_rows}
 
-        # ── Camera stats ─────────────────────────────────────────────────────
         cameras_raw = conn.execute(
             "SELECT id, name, location, rtsp_url, enabled, lat, lng,"
             "       face_recognition_enabled, recording_enabled, created_at"
@@ -219,7 +188,6 @@ def report_full():
                 'top_objects':         [dict(r) for r in top_objects],
             })
 
-        # ── Face detection logs ──────────────────────────────────────────────
         fd_query = (
             "SELECT fd.id, fd.timestamp, fd.confidence, fd.face_count,"
             "       c.name AS camera_name, c.location AS camera_location,"
@@ -237,7 +205,6 @@ def report_full():
         fd_query += " ORDER BY fd.timestamp DESC LIMIT 300"
         face_detections = [dict(r) for r in conn.execute(fd_query, fd_params).fetchall()]
 
-        # ── Top recognised persons ───────────────────────────────────────────
         top_persons = [dict(r) for r in conn.execute(
             "SELECT p.name, p.employee_id, p.role, p.department, p.authorized,"
             "       COUNT(fd.id) AS appearances"
@@ -246,7 +213,6 @@ def report_full():
             " GROUP BY fd.person_id ORDER BY appearances DESC LIMIT 20",
             (dt_from, dt_to)).fetchall()]
 
-        # ── Object detection logs ────────────────────────────────────────────
         od_query = (
             "SELECT od.id, od.timestamp, od.class_name, od.confidence,"
             "       c.name AS camera_name, c.location AS camera_location"
@@ -260,7 +226,6 @@ def report_full():
         od_query += " ORDER BY od.timestamp DESC LIMIT 300"
         object_detections = [dict(r) for r in conn.execute(od_query, od_params).fetchall()]
 
-        # Top detected object classes
         top_classes = [dict(r) for r in conn.execute(
             "SELECT class_name, COUNT(*) as cnt FROM object_detections od"
             " WHERE od.timestamp BETWEEN ? AND ?"
@@ -268,7 +233,6 @@ def report_full():
             + " GROUP BY class_name ORDER BY cnt DESC LIMIT 10",
             od_params).fetchall()]
 
-        # ── Sensor readings summary ──────────────────────────────────────────
         sensor_summary = [dict(r) for r in conn.execute(
             "SELECT device_id,"
             "       ROUND(AVG(temperature),1) AS avg_temp,"
@@ -281,19 +245,16 @@ def report_full():
             " GROUP BY device_id ORDER BY device_id",
             (dt_from, dt_to)).fetchall()]
 
-        # Recent sensor readings (forensic)
         sensor_readings = [dict(r) for r in conn.execute(
             "SELECT id,device_id,timestamp,temperature,humidity,gas,mic,motion,ai_score,alert_type"
             " FROM readings WHERE timestamp BETWEEN ? AND ?"
             " ORDER BY timestamp DESC LIMIT 200",
             (dt_from, dt_to)).fetchall()]
 
-        # ── Persons list ─────────────────────────────────────────────────────
         persons = [dict(r) for r in conn.execute(
             "SELECT id, name, employee_id, role, department, authorized, created_at"
             " FROM persons ORDER BY name").fetchall()]
 
-        # ── Devices list ─────────────────────────────────────────────────────
         devices = [dict(r) for r in conn.execute(
             "SELECT device_id, location, lat, lng, status, trained_at, last_seen"
             " FROM devices").fetchall()]
@@ -336,19 +297,14 @@ def report_full():
     finally:
         conn.close()
 
-
-# ── Face detection history ────────────────────────────────────────────────────
-
 @bp.route('/api/face-detections')
 def get_face_detections():
-    """?camera_id=&person_id=&hours=24&unknown_only=false&limit=100"""
     camera_id    = request.args.get('camera_id', type=int)
     person_id    = request.args.get('person_id', type=int)
     hours        = request.args.get('hours', 24, type=int)
     unknown_only = request.args.get('unknown_only', 'false').lower() == 'true'
     limit        = request.args.get('limit', 100, type=int)
 
-    # Build query with safe integer hours (no user string interpolation)
     query = (
         "SELECT fd.*, c.name AS camera_name, c.location,"
         "       p.name AS person_name, p.employee_id AS person_employee_id,"
@@ -379,9 +335,6 @@ def get_face_detections():
     finally:
         conn.close()
 
-
-# ── Identity analytics (cloud / full FR mode only) ────────────────────────────
-
 @bp.route('/api/face-analytics/unknown')
 def get_unknown_faces():
     if not fre or not getattr(fre, 'identity_analytics_active', lambda: False)():
@@ -391,7 +344,6 @@ def get_unknown_faces():
         return jsonify({'success': True, 'data': fre.get_unknown_faces(hours=hours)})
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 500
-
 
 @bp.route('/api/face-analytics/timeline')
 def get_person_timeline():

@@ -1,8 +1,3 @@
-"""
-routes/cameras.py — camera CRUD, connectivity tests, and live-stream endpoints.
-
-Blueprint prefix: /api
-"""
 import base64
 from pathlib import Path
 
@@ -20,9 +15,6 @@ _UPDATABLE_FIELDS = (
     'lat', 'lng', 'enabled', 'face_recognition_enabled', 'recording_enabled',
 )
 
-
-# ── CRUD ──────────────────────────────────────────────────────────────────────
-
 @bp.route('/api/cameras', methods=['GET'])
 def get_cameras():
     conn = get_db()
@@ -34,7 +26,6 @@ def get_cameras():
         return jsonify({'success': False, 'error': str(exc)}), 500
     finally:
         conn.close()
-
 
 @bp.route('/api/cameras', methods=['POST'])
 def create_camera():
@@ -67,7 +58,6 @@ def create_camera():
     finally:
         conn.close()
 
-
 @bp.route('/api/cameras/<int:camera_id>', methods=['PATCH'])
 def update_camera(camera_id):
     data    = request.get_json(force=True) or {}
@@ -86,7 +76,6 @@ def update_camera(camera_id):
         if not camera:
             return jsonify({'success': False, 'error': 'Camera not found'}), 404
 
-        # Sync face-recognition loop state
         if FACE_RECOGNITION_ENABLED and hasattr(fre, 'start_face_recognition_loop'):
             try:
                 if camera['enabled'] and camera['face_recognition_enabled']:
@@ -94,14 +83,13 @@ def update_camera(camera_id):
                 else:
                     fre.stop_face_recognition_loop(camera_id)
             except Exception as lp_err:
-                print(f"⚠️  FR loop update for camera {camera_id}: {lp_err}")
+                print(f"[WARN]  FR loop update for camera {camera_id}: {lp_err}")
 
         return jsonify({'success': True, 'data': dict(camera)})
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 500
     finally:
         conn.close()
-
 
 @bp.route('/api/cameras/<int:camera_id>', methods=['DELETE'])
 def delete_camera(camera_id):
@@ -121,9 +109,6 @@ def delete_camera(camera_id):
         return jsonify({'success': False, 'error': str(exc)}), 500
     finally:
         conn.close()
-
-
-# ── Connectivity & diagnostics ────────────────────────────────────────────────
 
 @bp.route('/api/cameras/<int:camera_id>/test')
 def test_camera(camera_id):
@@ -149,7 +134,6 @@ def test_camera(camera_id):
     except Exception as exc:
         return jsonify({'success': False, 'online': False, 'error': str(exc)})
 
-
 @bp.route('/api/cameras/<device_id>/diagnostics')
 def get_camera_diagnostics(device_id):
     cam_rec     = recorder.get_recorder()
@@ -160,9 +144,6 @@ def get_camera_diagnostics(device_id):
         'data':    diagnostics,
     }), status_code
 
-
-# ── Live streams ──────────────────────────────────────────────────────────────
-
 @bp.route('/api/cameras/<device_id>/snapshot')
 def get_camera_snapshot(device_id):
     cam_rec = recorder.get_recorder()
@@ -172,7 +153,6 @@ def get_camera_snapshot(device_id):
     if not path or not Path(path).exists():
         return jsonify({'success': False, 'error': 'Snapshot unavailable'}), 404
     return send_file(path, mimetype='image/jpeg', max_age=0)
-
 
 @bp.route('/api/cameras/<device_id>/stream')
 def get_camera_stream(device_id):
@@ -185,7 +165,6 @@ def get_camera_stream(device_id):
         cam_rec.mjpeg_stream(device_id),
         mimetype='multipart/x-mixed-replace; boundary=ffmpeg',
     )
-
 
 @bp.route('/api/cameras/<int:camera_id>/mjpeg')
 def get_camera_mjpeg(camera_id):
@@ -203,12 +182,8 @@ def get_camera_mjpeg(camera_id):
         },
     )
 
-
-# ── Object detections ─────────────────────────────────────────────────────────
-
 @bp.route('/api/cameras/<int:camera_id>/object-detections')
 def get_object_detections(camera_id):
-    """Return recent object detections for a camera."""
     hours = max(0.01, min(float(request.args.get('hours', 1)), 168))
     limit = max(1, min(int(request.args.get('limit', 50)), 200))
     conn = get_db()
@@ -224,9 +199,6 @@ def get_object_detections(camera_id):
     ).fetchall()
     conn.close()
     return jsonify({'success': True, 'data': [dict(r) for r in rows]})
-
-
-# ── Recordings ────────────────────────────────────────────────────────────────
 
 @bp.route('/api/recordings/<path:filename>')
 def get_recording_file(filename):

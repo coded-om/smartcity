@@ -1,34 +1,14 @@
-"""
-stream_buffer.py — shared per-camera RTSP frame buffer.
-
-Maintains one ffmpeg process per RTSP camera, shared across all consumers
-(snapshot callers and MJPEG stream generators).  This keeps usage within the
-camera's concurrent-session limit (~2 for most EZVIZ devices).
-"""
 import subprocess
 import threading
 import time
 
-
 class LiveStreamBuffer:
-    """One ffmpeg process per RTSP camera, shared by all consumers.
-
-    Reads the RTSP stream continuously and stores the latest decoded JPEG frame
-    in memory.  Snapshot and MJPEG-stream callers read from this buffer instead
-    of each opening their own RTSP connection.
-
-    Class-level registry: every CameraRecorder instance that calls ``get()``
-    receives the same buffer object for the same camera_id.
-    """
 
     _registry: dict = {}
     _registry_lock = threading.Lock()
 
-    # ── Class-level factory ───────────────────────────────────────────────────
-
     @classmethod
     def get(cls, camera_id: int, rtsp_url: str) -> 'LiveStreamBuffer':
-        """Return (and lazily create) the shared buffer for *camera_id*."""
         with cls._registry_lock:
             buf = cls._registry.get(camera_id)
             if buf is None or not buf.alive():
@@ -37,8 +17,6 @@ class LiveStreamBuffer:
                 buf = cls(camera_id, rtsp_url)
                 cls._registry[camera_id] = buf
         return buf
-
-    # ── Construction / reader thread ──────────────────────────────────────────
 
     def __init__(self, camera_id: int, rtsp_url: str) -> None:
         self.camera_id  = camera_id
@@ -79,7 +57,6 @@ class LiveStreamBuffer:
                 if not data:
                     break
                 buf += data
-                # Parse back-to-back JPEG frames by SOI/EOI markers.
                 while True:
                     s = buf.find(b'\xff\xd8')
                     if s < 0:
@@ -108,10 +85,7 @@ class LiveStreamBuffer:
                 except Exception:
                     pass
 
-    # ── Public API ────────────────────────────────────────────────────────────
-
     def alive(self) -> bool:
-        """True when the reader thread and ffmpeg process are still running."""
         return (
             self._thread.is_alive()
             and self._process is not None
@@ -119,7 +93,6 @@ class LiveStreamBuffer:
         )
 
     def snapshot(self, timeout: float = 10.0) -> bytes | None:
-        """Block up to *timeout* seconds and return the latest JPEG frame."""
         deadline = time.time() + timeout
         while time.time() < deadline:
             with self._lock:
@@ -129,7 +102,6 @@ class LiveStreamBuffer:
         return None
 
     def stream(self, fps: int = 5):
-        """Generator yielding ``multipart/x-mixed-replace`` boundary chunks."""
         interval   = 1.0 / max(1, fps)
         last_frame = None
         deadline   = time.time() + 12.0   # wait up to 12 s for first frame
@@ -151,6 +123,5 @@ class LiveStreamBuffer:
             time.sleep(interval)
 
     def stop(self) -> None:
-        """Signal the reader thread to exit and terminate ffmpeg."""
         self._stop_event.set()
         self._terminate()

@@ -1,24 +1,3 @@
-"""
-Recorder - RTSP Camera Recording System
-========================================
-
-Records video clips from EZVIZ cameras when alerts are triggered.
-
-Features:
-- RTSP stream recording via ffmpeg
-- 30-second clips centered on alert
-- Motion-triggered recording
-- Multiple camera support
-- Auto-cleanup of old recordings
-
-Camera Support:
-- EZVIZ cameras (CS-C6N, CS-CV246, etc.)
-- Generic RTSP cameras
-- USB cameras (via V4L2)
-
-RTSP URL Format:
-rtsp://username:password@camera_ip:554/h264/ch1/main/av_stream
-"""
 
 import subprocess
 import os
@@ -34,46 +13,33 @@ except Exception:
 
 from stream_buffer import LiveStreamBuffer
 
-
 class CameraRecorder:
-    """RTSP camera recorder using ffmpeg"""
     
     def __init__(self, recordings_dir: str = None):
-        """
-        Initialize recorder.
-        
-        Args:
-            recordings_dir: Directory for video storage
-        """
         self.recordings_dir = Path(recordings_dir or 
                                    Path(__file__).parent / 'recordings')
         self.recordings_dir.mkdir(exist_ok=True)
         self._snapshot_cache = {}
         self._snapshot_lock = threading.Lock()
-        # Debounce: track cameras that already have a recording in progress.
         self._recording_in_progress: set = set()
         self._recording_lock = threading.Lock()
         self.preview_width = max(160, int(os.getenv('CAMERA_PREVIEW_WIDTH', '240')))
         self.preview_quality = min(31, max(2, int(os.getenv('CAMERA_PREVIEW_JPEG_QUALITY', '28'))))
         self.preview_interval_seconds = max(0.5, float(os.getenv('CAMERA_PREVIEW_INTERVAL', '2.5')))
         
-        # Camera configuration from environment
         self.cameras = self._load_camera_config()
         
-        # Check ffmpeg availability
         self.ffmpeg_available = self._check_ffmpeg()
         
         if not self.ffmpeg_available:
-            print("⚠️  ffmpeg not found. Camera recording disabled.")
+            print("[WARN]  ffmpeg not found. Camera recording disabled.")
             print("   Install: sudo apt install ffmpeg")
 
     def _format_subprocess_error(self, stderr: bytes, default_message: str) -> str:
-        """Return the useful tail of a subprocess stderr message."""
         decoded = stderr.decode(errors='ignore').strip() if stderr else ''
         return decoded[-400:] if decoded else default_message
 
     def get_preview_profile(self) -> dict:
-        """Return live preview tuning settings."""
         return {
             'width': self.preview_width,
             'jpeg_quality': self.preview_quality,
@@ -83,7 +49,6 @@ class CameraRecorder:
         }
     
     def _check_ffmpeg(self) -> bool:
-        """Check if ffmpeg is installed"""
         try:
             result = subprocess.run(
                 ['ffmpeg', '-version'],
@@ -95,7 +60,6 @@ class CameraRecorder:
             return False
 
     def _build_preview_ffmpeg_input_args(self, rtsp_url: str) -> list:
-        """Return shared ffmpeg input args for RTSP preview work."""
         return [
             'ffmpeg',
             '-hide_banner',
@@ -105,13 +69,8 @@ class CameraRecorder:
         ]
     
     def _load_camera_config(self) -> dict:
-        """Load camera RTSP URLs from database first, then fallback to environment variables.
-        Database format: cameras table with device_id, rtsp_url
-        Env format: CAMERA_<DEVICE_ID>=rtsp://...
-        """
         cameras = {}
 
-        # Try loading from database first
         try:
             import sqlite3
             db_path = Path(__file__).parent / 'sensors.db'
@@ -124,7 +83,6 @@ class CameraRecorder:
                 conn.close()
                 
                 for row in rows:
-                    # Use camera name or ID as key
                     camera_key = row['device_id'] if row['device_id'] else f"cam_{row['id']}"
                     cameras[camera_key] = {
                         'rtsp': row['rtsp_url'],
@@ -134,13 +92,12 @@ class CameraRecorder:
                     }
                 
                 if cameras:
-                    print(f"📹 Loaded {len(cameras)} camera(s) from database")
+                    print(f"[Camera] Loaded {len(cameras)} camera(s) from database")
                     for key, cam in cameras.items():
                         print(f"   - {key}: {cam.get('name', 'N/A')}")
         except Exception as e:
-            print(f"⚠️  Could not load cameras from database: {e}")
+            print(f"[WARN]  Could not load cameras from database: {e}")
 
-        # Fallback to environment variables if no DB cameras found
         if not cameras:
             for key, value in os.environ.items():
                 if key.startswith('CAMERA_'):
@@ -148,21 +105,16 @@ class CameraRecorder:
                     cameras[device_id] = {'rtsp': value, 'type': 'RTSP'}
 
             if cameras:
-                print(f"📹 Loaded {len(cameras)} camera(s) from environment")
+                print(f"[Camera] Loaded {len(cameras)} camera(s) from environment")
                 for device_id in cameras.keys():
                     print(f"   - {device_id}")
             else:
-                print("⚠️  No cameras configured")
+                print("[WARN]  No cameras configured")
                 print("   Add cameras via API or .env: CAMERA_esp32_1=rtsp://...")
         
         return cameras
 
     def _resolve_camera_mapping(self, device_id: str):
-        """Resolve a device id to the configured camera id and URL.
-
-        Returns:
-            tuple[str | None, str | None]: (resolved_device_id, rtsp_url)
-        """
         def _extract_url(camera_config):
             if not camera_config:
                 return None
@@ -172,48 +124,34 @@ class CameraRecorder:
                 return camera_config.get('rtsp')
             return None
 
-        # 1) Direct device match
         rtsp_url = _extract_url(self.cameras.get(device_id))
         if rtsp_url:
             return device_id, rtsp_url
 
-        # 2) If only one camera exists, use it as final fallback for any device
         if len(self.cameras) == 1:
             only_device_id = next(iter(self.cameras.keys()))
             rtsp_url = _extract_url(self.cameras.get(only_device_id))
             if rtsp_url:
-                print(f"ℹ️  Using only configured camera '{only_device_id}' for {device_id}")
+                print(f"[Info]  Using only configured camera '{only_device_id}' for {device_id}")
                 return only_device_id, rtsp_url
 
         return None, None
 
     def _get_rtsp_url(self, device_id: str) -> str:
-        """Resolve RTSP URL for device from camera config."""
         _, rtsp_url = self._resolve_camera_mapping(device_id)
         return rtsp_url
 
     def _get_recording_url(self, device_id: str) -> str:
-        """Return the best RTSP URL to use for recording.
-
-        Prefers MediaMTX local RTSP (localhost:8554/factory01_raw) so that
-        ffmpeg does not open a second direct connection to the camera —
-        most cameras only allow one concurrent RTSP session.
-        Falls back to the direct camera URL if MediaMTX is not running.
-        """
         mediamtx_host = os.getenv('MEDIAMTX_HOST', 'localhost')
         mediamtx_port = os.getenv('MEDIAMTX_RTSP_PORT', '8554')
 
-        # Resolve the actual configured camera id and direct RTSP URL.
         resolved_device_id, direct_url = self._resolve_camera_mapping(device_id)
         if not direct_url:
             return None
 
-        # Build the MediaMTX path name from the device id:
-        # ESP32_Factory01 → factory01_raw  (raw H265, stream-copy friendly)
         raw_path = resolved_device_id.replace('ESP32_', '').lower() + '_raw'
         mediamtx_url = f'rtsp://{mediamtx_host}:{mediamtx_port}/{raw_path}'
 
-        # Probe MediaMTX to see if the path is live (quick 2s timeout)
         try:
             probe = subprocess.run(
                 ['ffprobe', '-v', 'quiet', '-rtsp_transport', 'tcp',
@@ -226,7 +164,6 @@ class CameraRecorder:
         except Exception:
             pass
 
-        # MediaMTX not available — fall back to direct camera URL
         return direct_url
     
     def record_alert(self, device_id: str, alert_type: str, 
@@ -245,27 +182,23 @@ class CameraRecorder:
         if not self.ffmpeg_available:
             return None
         
-        # Debounce: skip if a recording for this device is already running.
         with self._recording_lock:
             if device_id in self._recording_in_progress:
                 return None
             self._recording_in_progress.add(device_id)
 
-        # Get camera URL for this device (prefer MediaMTX local RTSP)
         rtsp_url = self._get_recording_url(device_id)
         
         if not rtsp_url:
-            print(f"⚠️  No camera configured for {device_id}")
+            print(f"[WARN]  No camera configured for {device_id}")
             with self._recording_lock:
                 self._recording_in_progress.discard(device_id)
             return None
         
-        # Generate filename
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"{device_id}_{alert_type}_{timestamp}.mp4"
         output_path = self.recordings_dir / filename
         
-        # Record in background thread
         thread = threading.Thread(
             target=self._record_worker,
             args=(rtsp_url, str(output_path), duration, device_id),
@@ -273,7 +206,7 @@ class CameraRecorder:
         )
         thread.start()
         
-        print(f"📹 Recording started: {filename}")
+        print(f"[Camera] Recording started: {filename}")
         
         return str(output_path)
     
@@ -281,7 +214,6 @@ class CameraRecorder:
                        duration: int, device_id: str = None):
         """Background worker for recording"""
         try:
-            # Fast path: copy H264 stream without re-encoding
             cmd_copy = [
                 'ffmpeg',
                 '-hide_banner',
@@ -296,7 +228,6 @@ class CameraRecorder:
                 output_path
             ]
 
-            # Fallback path: re-encode if copy fails (more compatible)
             cmd_reencode = [
                 'ffmpeg',
                 '-hide_banner',
@@ -314,7 +245,6 @@ class CameraRecorder:
                 output_path
             ]
             
-            # Try stream-copy first
             result = subprocess.run(
                 cmd_copy,
                 capture_output=True,
@@ -322,7 +252,6 @@ class CameraRecorder:
             )
             
             if result.returncode != 0:
-                # Retry with re-encode for compatibility
                 result = subprocess.run(
                     cmd_reencode,
                     capture_output=True,
@@ -331,31 +260,22 @@ class CameraRecorder:
 
             if result.returncode == 0:
                 file_size = Path(output_path).stat().st_size / (1024 * 1024)
-                print(f"✅ Recording complete: {Path(output_path).name} ({file_size:.1f} MB)")
+                print(f"[OK] Recording complete: {Path(output_path).name} ({file_size:.1f} MB)")
             else:
                 stderr = result.stderr.decode(errors='ignore').strip()
                 stderr_tail = stderr[-400:] if stderr else 'Unknown ffmpeg error'
-                print(f"❌ Recording failed: {stderr_tail}")
+                print(f"[ERROR] Recording failed: {stderr_tail}")
                 
         except subprocess.TimeoutExpired:
-            print(f"⏱️  Recording timeout: {output_path}")
+            print(f"  Recording timeout: {output_path}")
         except Exception as e:
-            print(f"❌ Recording error: {e}")
+            print(f"[ERROR] Recording error: {e}")
         finally:
             if device_id:
                 with self._recording_lock:
                     self._recording_in_progress.discard(device_id)
     
     def record_snapshot(self, device_id: str) -> str:
-        """
-        Capture single frame snapshot.
-        
-        Args:
-            device_id: Device identifier
-        
-        Returns:
-            str: Path to snapshot image, or None if failed
-        """
         rtsp_url = self._get_recording_url(device_id)
         if not rtsp_url:
             return None
@@ -364,7 +284,6 @@ class CameraRecorder:
         filename = f"{device_id}_snapshot_{timestamp}.jpg"
         output_path = self.recordings_dir / filename
         
-        # Try ffmpeg first when available, then fall back to OpenCV.
         ffmpeg_error = None
         if self.ffmpeg_available:
             try:
@@ -386,7 +305,7 @@ class CameraRecorder:
                 )
 
                 if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
-                    print(f"📸 Snapshot saved: {filename}")
+                    print(f" Snapshot saved: {filename}")
                     return str(output_path)
 
                 ffmpeg_error = self._format_subprocess_error(result.stderr, 'Unknown ffmpeg snapshot error')
@@ -398,7 +317,6 @@ class CameraRecorder:
             try:
                 capture = cv2.VideoCapture(rtsp_url)
                 if capture.isOpened():
-                    # Warm up a couple of frames for RTSP sources.
                     frame = None
                     for _ in range(3):
                         ok, frame = capture.read()
@@ -413,23 +331,22 @@ class CameraRecorder:
                             frame = cv2.resize(frame, (self.preview_width, scaled_height))
                         saved = cv2.imwrite(str(output_path), frame)
                         if saved and output_path.exists() and output_path.stat().st_size > 0:
-                            print(f"📸 Snapshot saved via OpenCV: {filename}")
+                            print(f" Snapshot saved via OpenCV: {filename}")
                             return str(output_path)
             except Exception as e:
-                print(f"❌ OpenCV snapshot fallback error: {e}")
+                print(f"[ERROR] OpenCV snapshot fallback error: {e}")
             finally:
                 if capture is not None:
                     capture.release()
 
         if ffmpeg_error:
-            print(f"❌ Snapshot failed: {ffmpeg_error}")
+            print(f"[ERROR] Snapshot failed: {ffmpeg_error}")
         else:
-            print("❌ Snapshot failed: No available capture method succeeded")
+            print("[ERROR] Snapshot failed: No available capture method succeeded")
 
         return None
 
     def mjpeg_stream(self, device_id: str):
-        """Yield a direct MJPEG stream from ffmpeg for browser live preview."""
         if not self.ffmpeg_available:
             return
 
@@ -470,10 +387,9 @@ class CameraRecorder:
 
                 stderr = process.stderr.read() if process.stderr else b''
                 if process.returncode not in (0, None):
-                    print(f"❌ MJPEG stream failed: {self._format_subprocess_error(stderr, 'Unknown streaming error')}")
+                    print(f"[ERROR] MJPEG stream failed: {self._format_subprocess_error(stderr, 'Unknown streaming error')}")
 
     def mjpeg_stream_by_id(self, camera_id: int, fps: int = 5):
-        """Yield a direct MJPEG stream from ffmpeg for a camera looked up by database ID."""
         if not self.ffmpeg_available:
             return
 
@@ -487,7 +403,7 @@ class CameraRecorder:
             ).fetchone()
             conn.close()
         except Exception as e:
-            print(f"❌ mjpeg_stream_by_id db error: {e}")
+            print(f"[ERROR] mjpeg_stream_by_id db error: {e}")
             return
 
         if not camera:
@@ -497,7 +413,6 @@ class CameraRecorder:
         cam_type = camera['type']
 
         if cam_type == 'ESP32-CAM':
-            # ESP32-CAM: poll common HTTP snapshot endpoints, yield frames manually
             import requests, time
             host = rtsp_url.rstrip('/')
             if not host.startswith('http'):
@@ -506,7 +421,6 @@ class CameraRecorder:
             working_path = None
             while True:
                 try:
-                    # Discover working path on first success
                     paths_to_try = [working_path] if working_path else snapshot_paths
                     for path in paths_to_try:
                         try:
@@ -527,21 +441,10 @@ class CameraRecorder:
                 time.sleep(1.0 / max(1, fps))
             return
 
-        # RTSP camera — use the shared stream buffer (one ffmpeg connection).
         buf = LiveStreamBuffer.get(camera_id, rtsp_url)
         yield from buf.stream(fps=fps)
 
     def get_live_snapshot(self, device_id: str, max_age_seconds: int = 3) -> str:
-        """
-        Return a recent snapshot for live preview, capturing a new one if needed.
-
-        Args:
-            device_id: Device identifier
-            max_age_seconds: Reuse recent snapshot younger than this age
-
-        Returns:
-            str: Path to snapshot image, or None if unavailable
-        """
         with self._snapshot_lock:
             cached = self._snapshot_cache.get(device_id)
             now = time.time()
@@ -562,19 +465,9 @@ class CameraRecorder:
                 }
                 return snapshot_path
 
-            # Fall back to older cached snapshot instead of returning None/404 on transient capture failure.
             return stale_cached_path
 
     def capture_snapshot_by_camera_id(self, camera_id: int) -> bytes:
-        """
-        Capture a snapshot from a camera by its database ID.
-        
-        Args:
-            camera_id: Camera ID from database
-            
-        Returns:
-            JPEG image bytes or None if failed
-        """
         try:
             import sqlite3
             db_path = Path(__file__).parent / 'sensors.db'
@@ -592,9 +485,7 @@ class CameraRecorder:
             rtsp_url = camera['rtsp_url']
             cam_type = camera['type']
             
-            # Handle different camera types
             if cam_type == 'ESP32-CAM':
-                # HTTP snapshot for ESP32-CAM — try /capture then /jpg/image.jpg
                 import requests
                 host = rtsp_url.rstrip('/')
                 if not host.startswith('http'):
@@ -606,18 +497,14 @@ class CameraRecorder:
                             return response.content
                     except Exception:
                         pass
-                # Fall back to RTSP snapshot if HTTP failed and rtsp_url looks like an IP
                 fallback_rtsp = camera.get('rtsp_url', '')
                 if fallback_rtsp and not fallback_rtsp.startswith('rtsp://'):
                     return None
                 rtsp_url = fallback_rtsp
                 if not rtsp_url:
                     return None
-                # fall through to RTSP path below
 
             if not cam_type == 'ESP32-CAM' or rtsp_url.startswith('rtsp://'):
-                # RTSP camera — use the shared stream buffer so we don't open
-                # an extra RTSP connection (camera connection limit is ~2).
                 if not self.ffmpeg_available:
                     return None
 
@@ -627,11 +514,10 @@ class CameraRecorder:
             return None
                 
         except Exception as e:
-            print(f"❌ Error capturing snapshot for camera {camera_id}: {e}")
+            print(f"[ERROR] Error capturing snapshot for camera {camera_id}: {e}")
             return None
 
     def diagnose_camera(self, device_id: str) -> dict:
-        """Run a lightweight end-to-end camera diagnostic."""
         started = time.perf_counter()
         rtsp_url = self._get_recording_url(device_id)
         snapshot_path = None
@@ -651,7 +537,6 @@ class CameraRecorder:
             diagnostics['error'] = f'No camera configured for {device_id}'
             return diagnostics
 
-        # Prefer existing cached snapshot first to avoid expensive RTSP reconnect during diagnostics.
         with self._snapshot_lock:
             cached = self._snapshot_cache.get(device_id)
             if cached:
@@ -686,12 +571,6 @@ class CameraRecorder:
         return diagnostics
     
     def cleanup_old_recordings(self, days: int = 7):
-        """
-        Delete recordings older than N days.
-        
-        Args:
-            days: Age threshold in days
-        """
         cutoff_time = time.time() - (days * 86400)
         deleted_count = 0
         freed_space = 0
@@ -705,10 +584,9 @@ class CameraRecorder:
         
         if deleted_count > 0:
             freed_mb = freed_space / (1024 * 1024)
-            print(f"🗑️  Deleted {deleted_count} old recording(s) ({freed_mb:.1f} MB freed)")
+            print(f"  Deleted {deleted_count} old recording(s) ({freed_mb:.1f} MB freed)")
     
     def get_recording_stats(self) -> dict:
-        """Get storage statistics"""
         mp4_files = list(self.recordings_dir.glob("*.mp4"))
         jpg_files = list(self.recordings_dir.glob("*.jpg"))
         
@@ -721,33 +599,27 @@ class CameraRecorder:
             'recordings_dir': str(self.recordings_dir)
         }
 
-
-# Singleton instance
 _recorder = None
 
 def get_recorder() -> CameraRecorder:
-    """Get global recorder instance"""
     global _recorder
     if _recorder is None:
         _recorder = CameraRecorder()
     return _recorder
 
-
 if __name__ == '__main__':
-    # Test recorder
-    print("🧪 Testing Camera Recorder")
+    print(" Testing Camera Recorder")
     print("=" * 50)
     
     recorder = get_recorder()
     
-    print(f"📹 ffmpeg available: {recorder.ffmpeg_available}")
-    print(f"📁 Recordings dir: {recorder.recordings_dir}")
-    print(f"🎥 Cameras configured: {len(recorder.cameras)}")
+    print(f"[Camera] ffmpeg available: {recorder.ffmpeg_available}")
+    print(f" Recordings dir: {recorder.recordings_dir}")
+    print(f" Cameras configured: {len(recorder.cameras)}")
     
     if recorder.cameras:
         for device_id in recorder.cameras.keys():
             url = recorder._get_rtsp_url(device_id)
-            # Mask password in URL
             masked_url = url.split('@')[-1] if '@' in url else url
             print(f"   {device_id}: ...@{masked_url}")
     

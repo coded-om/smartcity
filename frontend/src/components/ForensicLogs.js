@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import {
-  FiFilter, FiDownload, FiCheckCircle, FiBell, FiVideo,
-  FiSearch, FiChevronDown, FiChevronUp, FiTrash2,
-} from 'react-icons/fi';
+  Download, CheckCircle,
+  Search, ChevronDown, ChevronUp,
+} from 'lucide-react';
 import { apiFetch } from '../apiBase';
 import { cn, severityBg, alertTypeIcon, formatTimestamp, formatRelative } from '../lib/utils';
 
@@ -48,7 +48,7 @@ function AlertRow({ alert, selected, onSelect, onResolve }) {
         <td className="px-4 py-3 text-slate-400 text-sm font-mono">#{alert.id}</td>
         <td className="px-4 py-3">
           <span className="flex items-center gap-2 text-sm">
-            <span className="text-base">{alertTypeIcon(alert.alert_type)}</span>
+            <span className="shrink-0">{alertTypeIcon(alert.alert_type)}</span>
             <span className="text-white font-medium">{alert.alert_type}</span>
           </span>
         </td>
@@ -66,7 +66,7 @@ function AlertRow({ alert, selected, onSelect, onResolve }) {
         </td>
         <td className="px-4 py-3">
           {alert.resolved
-            ? <span className="flex items-center gap-1 text-xs text-emerald-400"><FiCheckCircle /> Resolved</span>
+            ? <span className="flex items-center gap-1 text-xs text-emerald-400"><CheckCircle size={12} /> Resolved</span>
             : <button
                 onClick={e => { e.stopPropagation(); onResolve(alert.id); }}
                 className="text-xs text-primary-400 hover:text-primary-300 border border-primary-500/30 rounded px-2 py-0.5 transition-colors"
@@ -74,7 +74,7 @@ function AlertRow({ alert, selected, onSelect, onResolve }) {
           }
         </td>
         <td className="px-4 py-3 text-slate-500 text-sm">
-          {expanded ? <FiChevronUp /> : <FiChevronDown />}
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </td>
       </tr>
       {expanded && (
@@ -102,8 +102,6 @@ function AlertRow({ alert, selected, onSelect, onResolve }) {
   );
 }
 
-// --- Main component ----------------------------------------------------------
-
 function ForensicLogs({ alerts: propAlerts }) {
   const [severityFilter, setSeverityFilter] = useState('all');
   const [typeFilter,     setTypeFilter]     = useState('all');
@@ -114,7 +112,7 @@ function ForensicLogs({ alerts: propAlerts }) {
   const [resolving,      setResolving]      = useState(new Set());
   const [localAlerts,    setLocalAlerts]    = useState(null);
 
-  const alerts = localAlerts ?? propAlerts ?? [];
+  const alerts = useMemo(() => localAlerts ?? propAlerts ?? [], [localAlerts, propAlerts]);
 
   const filtered = useMemo(() => {
     return alerts.filter(a => {
@@ -162,12 +160,12 @@ function ForensicLogs({ alerts: propAlerts }) {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      {/* Toolbar */}
+      {}
       <div className="bg-surface-600 border border-surface-500 rounded-2xl p-4 space-y-3">
-        {/* Search + filters row */}
+        {}
         <div className="flex flex-wrap gap-3 items-center">
           <div className="relative flex-1 min-w-48">
-            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm pointer-events-none" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
             <input
               value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search device or type…"
@@ -194,7 +192,7 @@ function ForensicLogs({ alerts: propAlerts }) {
           />
         </div>
 
-        {/* Action row */}
+        {}
         <div className="flex flex-wrap gap-2 items-center justify-between">
           <p className="text-slate-500 text-sm">{filtered.length} results</p>
           <div className="flex gap-2">
@@ -203,20 +201,20 @@ function ForensicLogs({ alerts: propAlerts }) {
                 onClick={resolveSelected}
                 className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20 transition-colors"
               >
-                <FiCheckCircle /> Resolve {selected.size} selected
+              <CheckCircle size={12} /> Resolve {selected.size} selected
               </button>
             )}
             <button
               onClick={() => exportCSV(filtered)}
               className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-300 hover:bg-primary-500/20 transition-colors"
             >
-              <FiDownload /> Export CSV
+              <Download size={13} /> Export CSV
             </button>
           </div>
         </div>
       </div>
 
-      {/* Table */}
+      {}
       <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left">
@@ -244,7 +242,7 @@ function ForensicLogs({ alerts: propAlerts }) {
               {filtered.length === 0 && (
                 <tr>
                   <td colSpan={9} className="text-center py-16 text-slate-500">
-                    <FiCheckCircle className="text-4xl mx-auto mb-3 text-slate-600" />
+                    <CheckCircle size={36} className="mx-auto mb-3 text-slate-600" />
                     <p>No alerts match your filters</p>
                   </td>
                 </tr>

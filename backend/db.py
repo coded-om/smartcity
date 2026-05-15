@@ -1,21 +1,10 @@
-"""
-db.py — database connection factory, schema initialisation, and shared helpers.
-
-Single responsibility: everything SQLite-related that is shared across the app.
-Route modules and mqtt_handler import from here; recorder.py keeps its own
-lightweight sqlite3 usage so it remains standalone-runnable.
-"""
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 
 from config import DB_PATH
 
-
-# ── Connection factory ────────────────────────────────────────────────────────
-
 def get_db() -> sqlite3.Connection:
-    """Return a new SQLite connection configured for WAL + row-factory."""
     conn = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -23,31 +12,20 @@ def get_db() -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
-
-# ── Small helpers ─────────────────────────────────────────────────────────────
-
 def to_db_datetime(dt: datetime) -> str:
-    """Return a sqlite-friendly datetime string (avoids deprecated adapter)."""
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
-
 def is_db_locked(err: Exception) -> bool:
-    """True when *err* is a SQLite 'database is locked' OperationalError."""
     return (
         isinstance(err, sqlite3.OperationalError)
         and 'database is locked' in str(err).lower()
     )
 
-
 def serialize_alert(row: sqlite3.Row) -> dict:
-    """Convert an alert DB row to an API-safe dict with a *video_url* field."""
     alert = dict(row)
     vf = alert.get('video_file')
     alert['video_url'] = f"/api/recordings/{Path(vf).name}" if vf else None
     return alert
-
-
-# ── Schema ────────────────────────────────────────────────────────────────────
 
 _SCHEMA_SQL = """
     CREATE TABLE IF NOT EXISTS readings (
@@ -163,7 +141,6 @@ _SCHEMA_SQL = """
         ON object_detections(camera_id, timestamp DESC);
 """
 
-# Additive-only migrations (column adds) — safe to re-run.
 _MIGRATIONS = [
     "ALTER TABLE devices          ADD COLUMN lat              REAL    DEFAULT NULL",
     "ALTER TABLE devices          ADD COLUMN lng              REAL    DEFAULT NULL",
@@ -175,9 +152,7 @@ _MIGRATIONS = [
     "ALTER TABLE face_detections  ADD COLUMN face_count       INTEGER DEFAULT 0",
 ]
 
-
 def init_db() -> None:
-    """Create tables + indexes, run additive migrations. Idempotent."""
     conn = get_db()
     conn.executescript(_SCHEMA_SQL)
     conn.commit()
@@ -186,13 +161,12 @@ def init_db() -> None:
             conn.execute(sql)
             conn.commit()
         except Exception:
-            pass  # column already exists — safe to ignore
+            pass  # column already exists  safe to ignore
     conn.close()
 
-    # Data directories for face recognition artefacts
     data_dir = Path(__file__).parent / 'data'
     (data_dir / 'persons' / 'photos').mkdir(parents=True, exist_ok=True)
     (data_dir / 'persons' / 'encodings').mkdir(parents=True, exist_ok=True)
     (data_dir / 'detections').mkdir(parents=True, exist_ok=True)
 
-    print("✅ Database initialised")
+    print("[OK] Database initialised")

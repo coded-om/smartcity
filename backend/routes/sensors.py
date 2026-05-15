@@ -1,8 +1,3 @@
-"""
-routes/sensors.py — sensor readings, alerts, devices, statistics, and AI models.
-
-Blueprint prefix: /api
-"""
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
@@ -14,20 +9,15 @@ from state import latest_readings
 
 bp = Blueprint('sensors', __name__)
 
-
-# ── Readings ──────────────────────────────────────────────────────────────────
-
 @bp.route('/api/latest')
 def get_latest():
     return jsonify({'success': True, 'data': latest_readings})
-
 
 @bp.route('/api/latest/<device_id>')
 def get_latest_device(device_id):
     reading = latest_readings.get(device_id)
     if reading:
         return jsonify({'success': True, 'data': reading})
-    # Fall back to DB when in-memory cache is empty (e.g. after restart)
     conn = get_db()
     row  = conn.execute(
         "SELECT * FROM readings WHERE device_id=? ORDER BY timestamp DESC LIMIT 1",
@@ -38,10 +28,8 @@ def get_latest_device(device_id):
         return jsonify({'success': True, 'data': dict(row)})
     return jsonify({'success': False, 'error': 'Device not found'}), 404
 
-
 @bp.route('/api/readings')
 def get_readings():
-    """?device=<id>&limit=<n>"""
     device = request.args.get('device')
     limit  = int(request.args.get('limit', 100))
     conn   = get_db()
@@ -57,12 +45,8 @@ def get_readings():
     conn.close()
     return jsonify({'success': True, 'data': [dict(r) for r in rows]})
 
-
-# ── Alerts ────────────────────────────────────────────────────────────────────
-
 @bp.route('/api/alerts')
 def get_alerts():
-    """?limit=<n>&resolved=<true|false>"""
     limit    = int(request.args.get('limit', 50))
     resolved = request.args.get('resolved')
     conn     = get_db()
@@ -79,7 +63,6 @@ def get_alerts():
     conn.close()
     return jsonify({'success': True, 'data': [serialize_alert(r) for r in rows]})
 
-
 @bp.route('/api/alerts/<int:alert_id>')
 def get_alert(alert_id):
     conn = get_db()
@@ -89,7 +72,6 @@ def get_alert(alert_id):
         return jsonify({'success': True, 'data': serialize_alert(row)})
     return jsonify({'success': False, 'error': 'Alert not found'}), 404
 
-
 @bp.route('/api/alerts/<int:alert_id>/resolve', methods=['PATCH'])
 def resolve_alert(alert_id):
     notes = (request.get_json(force=True) or {}).get('notes', '')
@@ -98,9 +80,6 @@ def resolve_alert(alert_id):
     conn.commit()
     conn.close()
     return jsonify({'success': True, 'message': 'Alert resolved'})
-
-
-# ── Devices ───────────────────────────────────────────────────────────────────
 
 @bp.route('/api/devices')
 def get_devices():
@@ -130,7 +109,6 @@ def get_devices():
         result.append(d)
     return jsonify({'success': True, 'data': result})
 
-
 @bp.route('/api/devices/<device_id>/location', methods=['PATCH'])
 def update_device_location(device_id):
     body     = request.get_json(force=True) or {}
@@ -155,9 +133,6 @@ def update_device_location(device_id):
         return jsonify({'success': False, 'error': str(exc)}), 500
     finally:
         conn.close()
-
-
-# ── Statistics ────────────────────────────────────────────────────────────────
 
 @bp.route('/api/stats')
 def get_stats():
@@ -189,9 +164,6 @@ def get_stats():
     finally:
         conn.close()
 
-
-# ── AI models ─────────────────────────────────────────────────────────────────
-
 @bp.route('/api/train/<device_id>', methods=['POST'])
 def train_device(device_id):
     try:
@@ -201,7 +173,6 @@ def train_device(device_id):
         return jsonify({'success': False, 'error': str(exc)}), 400
     except Exception as exc:
         return jsonify({'success': False, 'error': f'Training failed: {exc}'}), 500
-
 
 @bp.route('/api/models')
 def get_models():

@@ -1,11 +1,3 @@
-"""
-mqtt_handler.py — MQTT client and sensor message processing pipeline.
-
-Single responsibility: receive raw MQTT payloads, run AI prediction, persist
-readings/alerts to the database, and fire notifications/recordings when needed.
-
-No Flask objects are imported here — this module is framework-agnostic.
-"""
 import json
 import threading
 import time
@@ -20,11 +12,7 @@ from config import DB_WRITE_RETRY_ATTEMPTS, DB_WRITE_RETRY_DELAY_SECS
 from db import get_db, to_db_datetime, is_db_locked
 from state import latest_readings, can_record, can_alert
 
-
-# ── Payload helpers ───────────────────────────────────────────────────────────
-
 def _parse_device_id(data: dict) -> str:
-    """Extract and normalise *device_id* from a sensor payload dict."""
     raw = (
         data.get('device')
         or data.get('device_id')
@@ -34,11 +22,7 @@ def _parse_device_id(data: dict) -> str:
     )
     return str(raw).strip() if raw else 'ESP32_Unknown'
 
-
-# ── AI layer ──────────────────────────────────────────────────────────────────
-
 def _run_ai(device_id: str, data: dict) -> tuple[float, str, str | None]:
-    """Return *(ai_score, alert_type, severity)*.  Never raises."""
     try:
         pred       = ai_engine.predict(device_id, data)
         ai_score   = pred['score']
@@ -52,11 +36,8 @@ def _run_ai(device_id: str, data: dict) -> tuple[float, str, str | None]:
     except FileNotFoundError:
         return 0.0, 'TRAINING', None
     except Exception as exc:
-        print(f"⚠️  AI prediction error: {exc}")
+        print(f"[WARN]  AI prediction error: {exc}")
         return 0.0, 'NORMAL', None
-
-
-# ── Persistence ───────────────────────────────────────────────────────────────
 
 def _persist(
     device_id: str,
@@ -74,7 +55,6 @@ def _persist(
         try:
             conn = get_db()
 
-            # Upsert device heartbeat (preserves existing lat/lng/location/status)
             conn.execute(
                 """INSERT OR REPLACE INTO devices
                        (device_id, last_seen, status, location, lat, lng)
@@ -87,7 +67,6 @@ def _persist(
                  device_id, device_id, device_id, device_id),
             )
 
-            # Alert: only when severity is set and cooldown allows
             if severity is not None and can_alert(device_id, alert_type, now_ts):
                 video_path  = None
                 cam_rec     = recorder.get_recorder()
@@ -101,12 +80,11 @@ def _persist(
                 )
                 alert_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                 print(
-                    f"🚨 ALERT #{alert_id}: {device_id} – {alert_type}"
+                    f"[ALERT] ALERT #{alert_id}: {device_id}  {alert_type}"
                     f" (severity={severity}, score={ai_score:.3f})"
                     + (f" [rec: {video_path}]" if video_path else "")
                 )
 
-                # Telegram notification (non-blocking daemon thread)
                 notif = notifier.get_notifier()
                 if notif.enabled:
                     payload = {
@@ -122,7 +100,6 @@ def _persist(
                         daemon=True,
                     ).start()
 
-            # Sensor reading row
             conn.execute(
                 "INSERT INTO readings"
                 " (device_id, temperature, humidity, gas, mic, motion, ai_score, alert_type)"
@@ -136,7 +113,7 @@ def _persist(
             )
 
             conn.commit()
-            return  # success — exit retry loop
+            return  # success  exit retry loop
 
         except Exception as err:
             if conn:
@@ -157,16 +134,12 @@ def _persist(
                 except Exception:
                     pass
 
-
-# ── MQTT callbacks ────────────────────────────────────────────────────────────
-
-def on_message(client, userdata, msg) -> None:  # noqa: ARG001
-    """MQTT message callback: parse → AI → persist → cache update."""
+def on_message(client, userdata, msg) -> None:
+    """MQTT message callback: parse  AI  persist  cache update."""
     try:
         data      = json.loads(msg.payload.decode())
         device_id = _parse_device_id(data)
 
-        # Update in-memory cache immediately (read by /api/latest endpoints)
         latest_readings[device_id] = {
             **data,
             'device_id': device_id,
@@ -184,21 +157,19 @@ def on_message(client, userdata, msg) -> None:  # noqa: ARG001
 
         latest_readings[device_id]['ai_score'] = ai_score
 
-        emoji = '🚨' if alert_type not in ('NORMAL', 'TRAINING') else '📊'
+        emoji = '[ALERT]' if alert_type not in ('NORMAL', 'TRAINING') else ''
         print(f"{emoji} Saved reading from {device_id} [{alert_type}]")
 
     except Exception as exc:
-        print(f"❌ MQTT handler error: {exc}")
-
+        print(f"[ERROR] MQTT handler error: {exc}")
 
 def mqtt_thread() -> None:
-    """Connect to the broker, subscribe, and loop forever (run in daemon thread)."""
     try:
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         client.on_message = on_message
         client.connect("localhost", 1883, 60)
         client.subscribe("esp32/sensors")
-        print("✅ MQTT connected and subscribed")
+        print("[OK] MQTT connected and subscribed")
         client.loop_forever()
     except Exception as exc:
-        print(f"❌ MQTT error: {exc}")
+        print(f"[ERROR] MQTT error: {exc}")

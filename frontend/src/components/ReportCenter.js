@@ -1,9 +1,9 @@
 import React, { useState, useCallback } from 'react';
 import {
-  FiPrinter, FiDownload, FiRefreshCw,
-  FiAlertTriangle, FiActivity, FiCamera, FiUser,
-  FiThermometer, FiSearch, FiChevronDown, FiChevronRight,
-} from 'react-icons/fi';
+  Printer, Download, RefreshCw,
+  AlertTriangle, Activity, Camera, User,
+  Thermometer, Search, ChevronDown, ChevronRight,
+} from 'lucide-react';
 import { apiFetch } from '../apiBase';
 
 function fmt(ts) {
@@ -115,15 +115,15 @@ function buildCameras(d, meta) {
     '<tr><td><strong>' + c.name + '</strong></td><td>' + (c.location || '—') + '</td><td>' + (c.enabled ? 'Online' : 'Disabled') + '</td><td>' + (c.face_recognition_enabled ? 'Yes' : 'No') + '</td><td>' + c.face_detections + '</td><td>' + c.authorized_persons + '</td><td>' + c.unknown_persons + '</td><td>' + c.object_detections + '</td><td>' + (c.top_objects || []).map(o => o.class_name).join(', ') + '</td></tr>').join('');
   const details = (d.cameras || []).map(c => {
     const topObjs = (c.top_objects || []).map(o => '<tr><td>' + o.class_name + '</td><td>' + o.cnt + '</td></tr>').join('');
-    return '<h3 style="margin-top:20px">📷 ' + c.name + ' — ' + (c.location || 'No location') + '</h3>' +
+    return '<h3 style="margin-top:20px">Camera: ' + c.name + ' — ' + (c.location || 'No location') + '</h3>' +
       '<table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>' +
       '<tr><td>RTSP URL</td><td style="font-family:monospace;font-size:10px">' + c.rtsp_url + '</td></tr>' +
       '<tr><td>Face Detections</td><td>' + c.face_detections + '</td></tr>' +
       '<tr><td>Authorised</td><td>' + c.authorized_persons + '</td></tr>' +
       '<tr><td>Unknown</td><td>' + c.unknown_persons + '</td></tr>' +
       '<tr><td>Objects</td><td>' + c.object_detections + '</td></tr>' +
-      '<tr><td>FR Enabled</td><td>' + (c.face_recognition_enabled ? '✅' : '❌') + '</td></tr>' +
-      '<tr><td>Recording</td><td>' + (c.recording_enabled ? '✅' : '❌') + '</td></tr>' +
+      '<tr><td>FR Enabled</td><td>' + (c.face_recognition_enabled ? 'Yes' : 'No') + '</td></tr>' +
+      '<tr><td>Recording</td><td>' + (c.recording_enabled ? 'Yes' : 'No') + '</td></tr>' +
       '<tr><td>GPS</td><td>' + (c.lat && c.lng ? c.lat + ', ' + c.lng : '—') + '</td></tr>' +
       '</tbody></table>' +
       (topObjs ? '<table><thead><tr><th>Object</th><th>Count</th></tr></thead><tbody>' + topObjs + '</tbody></table>' : '');
@@ -200,14 +200,12 @@ function buildForensic(d, meta) {
   allEvents.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
   const totalEvents = allEvents.length;
 
-  // Helpers for type badges
   const typeBadgeHtml = t => t === 'ALERT'
     ? '<span style="background:#7f1d1d;color:#fca5a5;padding:1px 5px;border-radius:3px;font-size:9px">ALERT</span>'
     : t === 'FACE'
     ? '<span style="background:#4c1d95;color:#c4b5fd;padding:1px 5px;border-radius:3px;font-size:9px">FACE</span>'
     : '<span style="background:#0c4a6e;color:#7dd3fc;padding:1px 5px;border-radius:3px;font-size:9px">OBJECT</span>';
 
-  // §0 Case metadata block
   const metaBlock =
     '<div style="border:2px solid #1e3a5f;background:#0f2035;padding:16px;margin-bottom:16px;border-radius:4px">' +
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">' +
@@ -225,7 +223,6 @@ function buildForensic(d, meta) {
     '<div><span style="color:#94a3b8">Total Evidence Items:</span><br/><strong>' + totalEvents + '</strong></div>' +
     '</div></div>';
 
-  // §1 Evidence inventory (first 50)
   const evidenceRows = allEvents.slice(0, 50).map(e =>
     '<tr><td style="font-family:monospace;font-size:9px;white-space:nowrap;color:#6ee7b7">' + e.evdId + '</td>' +
     '<td>' + typeBadgeHtml(e.type) + '</td>' +
@@ -235,7 +232,6 @@ function buildForensic(d, meta) {
     '<td>' + e.acqMethod + '</td></tr>'
   ).join('');
 
-  // §2 Chain of Custody
   const nowStr = meta.generatedAt || '—';
   const cocRows = [
     ['1', 'AI Detection Engine (YOLOv8 / dlib)', nowStr, 'Evidence collected via automated AI analysis of RTSP video streams', '✓ Automated acquisition'],
@@ -248,7 +244,6 @@ function buildForensic(d, meta) {
     '<td>' + r[3] + '</td><td>' + r[4] + '</td></tr>'
   ).join('');
 
-  // §3 Chronological timeline (max 300)
   const timelineRows = allEvents.slice(0, 300).map(e => {
     const sevColor = e.severity === 'CRITICAL' ? '#fca5a5' : e.severity === 'HIGH' ? '#fdba74' : e.severity === 'MEDIUM' ? '#fde047' : e.severity === 'INFO' ? '#64748b' : '#86efac';
     return '<tr>' +
@@ -260,7 +255,6 @@ function buildForensic(d, meta) {
       '<td style="color:' + sevColor + ';font-size:10px">' + e.severity + '</td></tr>';
   }).join('');
 
-  // §4 Incident clusters (60-second windows, same source, min 2 events)
   const CLUSTER_WINDOW = 60000;
   const clusterMap = {};
   allEvents.forEach(e => { if (!clusterMap[e.source]) clusterMap[e.source] = []; clusterMap[e.source].push(e); });
@@ -299,7 +293,6 @@ function buildForensic(d, meta) {
     '<td style="text-align:center">' + c.duration + '</td></tr>'
   ).join('');
 
-  // §5 Person activity log
   const personMap = {};
   (d.face_detections || []).forEach(f => {
     const name = f.person_name || 'Unknown';
@@ -320,7 +313,6 @@ function buildForensic(d, meta) {
     '<td>' + [...p.cameras].join(', ') + '</td></tr>'
   ).join('');
 
-  // §6 Hourly alert distribution
   const hourlyData = d.hourly_alerts || {};
   const maxHourly = Math.max(1, ...Object.values(hourlyData).map(Number));
   const hourlyRows = Array.from({ length: 24 }, (_, h) => {
@@ -335,7 +327,6 @@ function buildForensic(d, meta) {
       '<td>' + (isPeak ? '⚡ PEAK' : '') + '</td></tr>';
   }).join('');
 
-  // §7 IoT sensor correlation
   const sensorRows = (d.sensor_readings || []).filter(r => r.motion || r.alert_type).slice(0, 50).map(r => {
     const rTime = new Date(r.timestamp || 0).getTime();
     const correlated = (d.alerts || []).find(a => Math.abs(new Date(a.timestamp || 0).getTime() - rTime) <= 60000);
@@ -350,7 +341,6 @@ function buildForensic(d, meta) {
       '<td style="color:' + (correlated ? '#fde047' : '#4b5563') + '">' + (correlated ? (correlated.alert_type || '—') + ' @ ' + (correlated.device_id || '—') : '—') + '</td></tr>';
   }).join('');
 
-  // Integrity footer
   const simpleHash = totalEvents * 31 + (d.alerts || []).length * 17 + (d.face_detections || []).length * 13 + (d.object_detections || []).length * 7;
   const footer =
     '<div style="border:1px solid #1e3a5f;background:#0a1628;padding:12px;margin-top:16px;border-radius:4px;font-size:10px">' +
@@ -391,8 +381,8 @@ function Section({ title, icon: Icon, defaultOpen = true, children }) {
   return (
     <div className="bg-surface-700 border border-surface-500 rounded-xl overflow-hidden mb-3">
       <button onClick={() => setOpen(o => !o)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-surface-600 transition-colors">
-        {open ? <FiChevronDown className="text-slate-400 shrink-0" /> : <FiChevronRight className="text-slate-400 shrink-0" />}
-        {Icon && <Icon className="text-slate-400 shrink-0 text-sm" />}
+        {open ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
+        {Icon && <Icon size={14} className="text-slate-400 shrink-0" />}
         <span className="text-sm font-semibold text-slate-200">{title}</span>
       </button>
       {open && <div className="px-4 pb-4 pt-1">{children}</div>}
@@ -433,17 +423,17 @@ function PTable({ cols, rows, empty = 'No data' }) {
 }
 
 function SevBadge({ s }) {
-  const cls = s === 'CRITICAL' ? 'bg-red-900/50 text-red-300' : s === 'HIGH' ? 'bg-orange-900/50 text-orange-300' : s === 'MEDIUM' ? 'bg-yellow-900/50 text-yellow-300' : 'bg-green-900/50 text-green-300';
+  const cls = s === 'CRITICAL' ? 'bg-accent-900/50 text-accent-300' : s === 'HIGH' ? 'bg-coral-900/50 text-coral-300' : s === 'MEDIUM' ? 'bg-bronze-900/50 text-bronze-300' : 'bg-emerald-900/50 text-emerald-300';
   return <span className={'px-1.5 py-0.5 rounded text-[10px] font-medium ' + cls}>{s}</span>;
 }
 
 const REPORT_TYPES = [
-  { id: 'executive', label: 'Executive Summary', icon: FiActivity,      desc: 'KPIs, overview, camera summary' },
-  { id: 'threats',   label: 'Threat Detection',  icon: FiAlertTriangle, desc: 'Alerts, objects, severity breakdown' },
-  { id: 'cameras',   label: 'Camera Report',     icon: FiCamera,        desc: 'Per-camera activity stats' },
-  { id: 'faces',     label: 'Face Recognition',  icon: FiUser,          desc: 'Persons, access log, unknowns' },
-  { id: 'sensors',   label: 'Sensor / IoT',      icon: FiThermometer,   desc: 'Temp, humidity, motion events' },
-  { id: 'forensic',  label: 'Forensic Timeline', icon: FiSearch,        desc: 'Merged chronological event log' },
+  { id: 'executive', label: 'Executive Summary', icon: Activity,       desc: 'KPIs, overview, camera summary' },
+  { id: 'threats',   label: 'Threat Detection',  icon: AlertTriangle,  desc: 'Alerts, objects, severity breakdown' },
+  { id: 'cameras',   label: 'Camera Report',     icon: Camera,         desc: 'Per-camera activity stats' },
+  { id: 'faces',     label: 'Face Recognition',  icon: User,           desc: 'Persons, access log, unknowns' },
+  { id: 'sensors',   label: 'Sensor / IoT',      icon: Thermometer,    desc: 'Temp, humidity, motion events' },
+  { id: 'forensic',  label: 'Forensic Timeline', icon: Search,         desc: 'Merged chronological event log' },
 ];
 
 export default function ReportCenter() {
@@ -522,10 +512,10 @@ export default function ReportCenter() {
         <KpiCard value={s.total_object_detections} label="Objects Detected" color="text-cyan-400" />
         <KpiCard value={s.total_readings} label="Sensor Readings" color="text-indigo-400" />
       </div>
-      <Section title="Alert Type Breakdown" icon={FiAlertTriangle}>
+      <Section title="Alert Type Breakdown" icon={AlertTriangle}>
         <PTable cols={['Type', 'Count', '%']} rows={Object.entries(data.alert_type_counts || {}).map(([t, c]) => [t, c, pct(c, s.total_alerts)])} />
       </Section>
-      <Section title="Camera Activity" icon={FiCamera}>
+      <Section title="Camera Activity" icon={Camera}>
         <PTable cols={['Camera', 'Location', 'Faces', 'Auth', 'Unknown', 'Objects']} rows={(data.cameras || []).map(c => [c.name, c.location || '—', c.face_detections, c.authorized_persons, c.unknown_persons, c.object_detections])} />
       </Section>
     </>);
@@ -537,10 +527,10 @@ export default function ReportCenter() {
         <KpiCard value={s.high_alerts} label="High" color="text-orange-400" />
         <KpiCard value={s.total_object_detections} label="Objects" color="text-cyan-400" />
       </div>
-      <Section title="Top Detected Classes" icon={FiSearch}>
+      <Section title="Top Detected Classes" icon={Search}>
         <PTable cols={['Object Class', 'Count']} rows={(data.top_classes || []).map(c => [c.class_name, c.cnt])} />
       </Section>
-      <Section title="Alert Log (latest 50)" icon={FiAlertTriangle}>
+      <Section title="Alert Log (latest 50)" icon={AlertTriangle}>
         <PTable cols={['#', 'Device', 'Type', 'Severity', 'Score', 'Time', 'Status']} rows={(data.alerts || []).slice(0, 50).map(a => [a.id, a.device_id || '—', a.alert_type || '—', <SevBadge key={a.id} s={a.severity} />, a.ai_score != null ? Number(a.ai_score).toFixed(3) : '—', fmt(a.timestamp), <span key={'st'+a.id} className={a.resolved ? 'text-green-400 text-[10px]' : 'text-red-400 text-[10px]'}>{a.resolved ? '✓' : '⚠'}</span>])} />
       </Section>
     </>);
@@ -552,11 +542,11 @@ export default function ReportCenter() {
         <KpiCard value={s.total_object_detections} label="Object Events" color="text-cyan-400" />
         <KpiCard value={s.unknown_detections} label="Unknown Persons" color="text-orange-400" />
       </div>
-      <Section title="Camera Summary" icon={FiCamera}>
+      <Section title="Camera Summary" icon={Camera}>
         <PTable cols={['Name', 'Location', 'Status', 'FR', 'Faces', 'Auth', 'Unknown', 'Objects']} rows={(data.cameras || []).map(c => [c.name, c.location || '—', <span key={c.id} className={c.enabled ? 'text-green-400 text-[10px]' : 'text-red-400 text-[10px]'}>{c.enabled ? 'Online' : 'Off'}</span>, <span key={'fr'+c.id} className={c.face_recognition_enabled ? 'text-blue-400 text-[10px]' : 'text-slate-500 text-[10px]'}>{c.face_recognition_enabled ? 'Yes' : 'No'}</span>, c.face_detections, c.authorized_persons, c.unknown_persons, c.object_detections])} />
       </Section>
       {(data.cameras || []).map(c => (
-        <Section key={c.id} title={'📷 ' + c.name + ' — ' + (c.location || 'No location')} icon={null} defaultOpen={false}>
+        <Section key={c.id} title={'Camera: ' + c.name + ' — ' + (c.location || 'No location')} icon={null} defaultOpen={false}>
           <div className="grid grid-cols-3 gap-2 mb-2">
             <KpiCard value={c.face_detections} label="Faces" color="text-violet-400" />
             <KpiCard value={c.authorized_persons} label="Authorised" color="text-green-400" />
@@ -574,10 +564,10 @@ export default function ReportCenter() {
         <KpiCard value={s.unknown_detections} label="Unknown" color="text-orange-400" />
         <KpiCard value={s.total_persons} label="Registered" color="text-sky-400" />
       </div>
-      <Section title="Most Frequent Persons" icon={FiUser}>
+      <Section title="Most Frequent Persons" icon={User}>
         <PTable cols={['Name', 'ID', 'Role', 'Dept', 'Status', 'Appearances']} rows={(data.top_persons || []).map(p => [p.name, p.employee_id || '—', p.role || '—', p.department || '—', <span key={p.name} className={p.authorized ? 'text-green-400 text-[10px]' : 'text-red-400 text-[10px]'}>{p.authorized ? 'Auth' : 'Unauth'}</span>, <strong key={'c'+p.name}>{p.appearances}</strong>])} />
       </Section>
-      <Section title="Detection Log (latest 50)" icon={FiSearch}>
+      <Section title="Detection Log (latest 50)" icon={Search}>
         <PTable cols={['Time', 'Camera', 'Person', 'Status', 'Confidence']} rows={(data.face_detections || []).slice(0, 50).map(fd => [fmt(fd.timestamp), fd.camera_name || '—', fd.person_name || <em key={fd.id} className="text-slate-500">Unknown</em>, <span key={'s'+fd.id} className={fd.authorized ? 'text-green-400 text-[10px]' : fd.person_name ? 'text-red-400 text-[10px]' : 'text-yellow-400 text-[10px]'}>{fd.authorized ? '✓ Auth' : fd.person_name ? '✗ Unauth' : '? Unknown'}</span>, fd.confidence != null ? (fd.confidence * 100).toFixed(1) + '%' : '—'])} />
       </Section>
     </>);
@@ -591,10 +581,10 @@ export default function ReportCenter() {
           <KpiCard value={totalMotion} label="Motion Events" color="text-orange-400" />
           <KpiCard value={s.total_alerts} label="Sensor Alerts" color="text-red-400" />
         </div>
-        <Section title="Device Summary" icon={FiThermometer}>
+        <Section title="Device Summary" icon={Thermometer}>
           <PTable cols={['Device', 'Readings', 'Avg Temp', 'Min', 'Max', 'Avg Hum', 'Motion']} rows={(data.sensor_summary || []).map(d => [d.device_id, d.reading_count, d.avg_temp != null ? d.avg_temp + '°C' : '—', d.min_temp != null ? d.min_temp + '°C' : '—', d.max_temp != null ? d.max_temp + '°C' : '—', d.avg_hum != null ? d.avg_hum + '%' : '—', d.motion_events])} />
         </Section>
-        <Section title="Recent Readings (30)" icon={FiActivity}>
+        <Section title="Recent Readings (30)" icon={Activity}>
           <PTable cols={['Time', 'Device', 'Temp', 'Humidity', 'Motion', 'Type']} rows={(data.sensor_readings || []).slice(0, 30).map(r => [fmt(r.timestamp), r.device_id, r.temperature != null ? r.temperature + '°C' : '—', r.humidity != null ? r.humidity + '%' : '—', <span key={r.id} className={r.motion ? 'text-orange-400 text-[10px]' : 'text-slate-500 text-[10px]'}>{r.motion ? '⚠' : '—'}</span>, r.alert_type || 'NORMAL'])} />
         </Section>
       </>);
@@ -629,7 +619,6 @@ export default function ReportCenter() {
       }));
       allEvents.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
 
-      // Person map
       const fPersonMap = {};
       (data.face_detections || []).forEach(f => {
         const name = f.person_name || 'Unknown';
@@ -641,7 +630,6 @@ export default function ReportCenter() {
         if (f.camera_name) p.cameras.add(f.camera_name);
       });
 
-      // Incident clusters
       const F_CLUSTER_WINDOW = 60000;
       const fClusterMap = {};
       allEvents.forEach(e => { if (!fClusterMap[e.source]) fClusterMap[e.source] = []; fClusterMap[e.source].push(e); });
@@ -679,7 +667,7 @@ export default function ReportCenter() {
       const fMeta = meta();
 
       return (<>
-        {/* KPI Grid */}
+        {}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
           <KpiCard value={allEvents.length} label="Total Evidence Items" color="text-white" />
           <KpiCard value={(data.alerts || []).length} label="Alert Events" color="text-red-400" />
@@ -688,8 +676,8 @@ export default function ReportCenter() {
           <KpiCard value={sensorMotion} label="Sensor Triggers" color="text-orange-400" />
         </div>
 
-        {/* Case Metadata */}
-        <Section title="Case Metadata" icon={FiSearch}>
+        {}
+        <Section title="Case Metadata" icon={Search}>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
             {[['Case ID', fCaseId], ['Classification', 'CONFIDENTIAL'], ['Standards', 'NIST SP 800-86 · ISO 27037 · ACPO'], ['Evidence Period', (fMeta.from || 'all') + ' → ' + (fMeta.to || 'now')], ['Generated', fMeta.generatedAt], ['Total Items', allEvents.length]].map(([k, v]) => (
               <div key={k} className="bg-surface-700 rounded p-2">
@@ -700,8 +688,8 @@ export default function ReportCenter() {
           </div>
         </Section>
 
-        {/* §1 Evidence Inventory */}
-        <Section title={'§1 Evidence Inventory (first 50 of ' + allEvents.length + ')'} icon={FiSearch}>
+        {}
+        <Section title={'§1 Evidence Inventory (first 50 of ' + allEvents.length + ')'} icon={Search}>
           <PTable cols={['Evidence ID', 'Type', 'Timestamp', 'Source', 'Detail', 'Confidence', 'Acquisition']}
             rows={allEvents.slice(0, 50).map((e, i) => [
               <span key={i} className="font-mono text-[10px] text-emerald-400">{e.evdId}</span>,
@@ -711,8 +699,8 @@ export default function ReportCenter() {
             ])} />
         </Section>
 
-        {/* §2 Forensic Timeline */}
-        <Section title={'§2 Forensic Timeline (' + Math.min(allEvents.length, 100) + ' of ' + allEvents.length + ')'} icon={FiSearch} defaultOpen={false}>
+        {}
+        <Section title={'§2 Forensic Timeline (' + Math.min(allEvents.length, 100) + ' of ' + allEvents.length + ')'} icon={Search} defaultOpen={false}>
           <PTable cols={['Evidence ID', 'Timestamp', 'Type', 'Source', 'Detail', 'Confidence', 'Severity']}
             rows={allEvents.slice(0, 100).map((e, i) => [
               <span key={i} className="font-mono text-[10px] text-emerald-400">{e.evdId}</span>,
@@ -722,9 +710,9 @@ export default function ReportCenter() {
             ])} />
         </Section>
 
-        {/* §3 Incident Clusters */}
+        {}
         {fClusters.length > 0 && (
-          <Section title={'§3 Incident Clusters (' + fClusters.length + ' detected)'} icon={FiAlertTriangle}>
+          <Section title={'§3 Incident Clusters (' + fClusters.length + ' detected)'} icon={AlertTriangle}>
             <PTable cols={['Cluster ID', 'Start', 'End', 'Source', 'Events', 'Types', 'Max Severity', 'Duration']}
               rows={fClusters.slice(0, 30).map((c, i) => [
                 <span key={i} className="font-mono text-[10px] text-yellow-400">{c.id}</span>,
@@ -737,9 +725,9 @@ export default function ReportCenter() {
           </Section>
         )}
 
-        {/* §4 Person Activity Log */}
+        {}
         {Object.keys(fPersonMap).length > 0 && (
-          <Section title="§4 Person Activity Log" icon={FiUser}>
+          <Section title="§4 Person Activity Log" icon={User}>
             <PTable cols={['Name', 'Employee ID', 'Status', 'First Seen', 'Last Seen', 'Appearances', 'Cameras']}
               rows={Object.values(fPersonMap).sort((a, b) => b.appearances - a.appearances).map((p, i) => [
                 p.name,
@@ -753,8 +741,8 @@ export default function ReportCenter() {
           </Section>
         )}
 
-        {/* §5 Hourly Distribution */}
-        <Section title="§5 Hourly Alert Distribution" icon={FiActivity} defaultOpen={false}>
+        {}
+        <Section title="§5 Hourly Alert Distribution" icon={Activity} defaultOpen={false}>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-[10px]">
             {Array.from({ length: 24 }, (_, h) => {
               const hr = String(h).padStart(2, '0');
@@ -776,8 +764,8 @@ export default function ReportCenter() {
           </div>
         </Section>
 
-        {/* §6 Chain of Custody */}
-        <Section title="§6 Chain of Custody" icon={FiSearch} defaultOpen={false}>
+        {}
+        <Section title="§6 Chain of Custody" icon={Search} defaultOpen={false}>
           <PTable cols={['Step', 'Custodian', 'Date/Time', 'Action', 'Integrity']}
             rows={[
               ['1', 'AI Detection Engine (YOLOv8 / dlib)', fMeta.generatedAt, 'Evidence collected via automated AI analysis of RTSP video streams', '✓ Automated'],
@@ -797,7 +785,7 @@ export default function ReportCenter() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      {/* Report type */}
+      {}
       <div className="bg-surface-600 border border-surface-500 rounded-2xl p-5">
         <h3 className="text-white font-semibold mb-3 text-sm">Report Type</h3>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
@@ -807,7 +795,7 @@ export default function ReportCenter() {
             return (
               <button key={t.id} onClick={() => setRType(t.id)} title={t.desc}
                 className={['flex flex-col items-center text-center gap-1.5 p-3 rounded-xl border transition-all text-xs', active ? 'bg-primary-500/20 border-primary-500/50 text-primary-300' : 'bg-surface-700 border-surface-500 text-slate-400 hover:border-slate-400 hover:text-white'].join(' ')}>
-                <Icon className="text-lg" />
+                <Icon size={18} />
                 <span className="font-semibold leading-tight">{t.label}</span>
               </button>
             );
@@ -815,7 +803,7 @@ export default function ReportCenter() {
         </div>
       </div>
 
-      {/* Filters + actions */}
+      {}
       <div className="bg-surface-600 border border-surface-500 rounded-2xl p-5">
         <div className="flex flex-wrap gap-3 items-end">
           <div className="flex flex-col gap-1">
@@ -838,24 +826,24 @@ export default function ReportCenter() {
           </div>
           <button onClick={load} disabled={loading}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-500/20 border border-primary-500/40 text-primary-300 hover:bg-primary-500/30 transition-colors text-sm font-medium">
-            <FiRefreshCw className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             {loading ? 'Loading…' : 'Load Report'}
           </button>
           {data && <>
             <button onClick={handlePrint}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surface-700 border border-surface-500 text-slate-300 hover:text-white transition-colors text-sm">
-              <FiPrinter /> Print / PDF
+              <Printer size={14} /> Print / PDF
             </button>
             <button onClick={handleCsv}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surface-700 border border-surface-500 text-slate-300 hover:text-white transition-colors text-sm">
-              <FiDownload /> Export CSV
+              <Download size={14} /> Export CSV
             </button>
           </>}
         </div>
-        {error && <p className="text-red-400 text-sm mt-3 flex items-center gap-1.5"><FiAlertTriangle />{error}</p>}
+        {error && <p className="text-accent-400 text-sm mt-3 flex items-center gap-1.5"><AlertTriangle size={14} />{error}</p>}
       </div>
 
-      {/* Preview */}
+      {}
       {data ? (
         <div className="bg-surface-600 border border-surface-500 rounded-2xl p-5">
           <div className="flex items-center justify-between mb-4">
@@ -866,7 +854,7 @@ export default function ReportCenter() {
         </div>
       ) : (
         <div className="bg-surface-600 border border-surface-500 rounded-2xl flex flex-col items-center justify-center py-24 text-slate-500">
-          <FiPrinter className="text-5xl mb-4 text-slate-600" />
+          <Printer size={48} className="mb-4 text-slate-600" />
           <p className="text-lg font-medium mb-1">No report loaded</p>
           <p className="text-sm">Select a date range and click <strong className="text-slate-400">Load Report</strong></p>
         </div>

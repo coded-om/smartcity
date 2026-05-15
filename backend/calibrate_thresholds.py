@@ -1,13 +1,3 @@
-"""
-calibrate_thresholds.py
-========================
-تشغيل: python calibrate_thresholds.py <camera_url>
-مثال: python calibrate_thresholds.py rtsp://admin:pass@192.168.1.100/stream1
-       python calibrate_thresholds.py 0   (ويب كام)
-
-يطبع الـ magnitude و variance لكل فريم حتى تعرف القيم المناسبة لكاميرتك.
-اضغط Q للخروج.
-"""
 import sys, time
 import cv2, numpy as np
 
@@ -44,12 +34,12 @@ except ValueError:
 
 cap = cv2.VideoCapture(source)
 if not cap.isOpened():
-    print(f"❌ Cannot open: {source}")
+    print(f"[ERROR] Cannot open: {source}")
     sys.exit(1)
 
 print("=" * 60)
-print("حرّك بشكل عادي → لاحظ MAG و VAR")
-print("حرّك بشكل عنيف (ضرب/هرولة) → لاحظ الفرق")
+print("حرّك بشكل عادي  لاحظ MAG و VAR")
+print("حرّك بشكل عنيف (ضرب/هرولة)  لاحظ الفرق")
 print("اضغط Q للخروج")
 print("=" * 60)
 print(f"{'MAG':>8} {'VAR':>6} {'PTS':>5}  {'تقييم':>20}")
@@ -70,13 +60,12 @@ while True:
         result = calc_flow(prev_gray, gray, prev_pts)
         if result:
             mag, var, pts = result
-            # تقييم (calibrated for EZVIZ camera)
             if mag >= 15.0 and var >= 0.30:
-                label = "🔴 FIGHTING"
+                label = " FIGHTING"
             elif mag >= 8.0:
-                label = "🟡 SUSPICIOUS"
+                label = " SUSPICIOUS"
             else:
-                label = "🟢 Normal"
+                label = " Normal"
             print(f"{mag:>8.2f} {var:>6.3f} {pts:>5}  {label}")
 
     prev_gray = gray
@@ -87,11 +76,11 @@ while True:
         if result:
             mag, var, pts = result
             if mag >= 8.0 and var >= 0.55:
-                label = "🔴 FIGHTING"
+                label = " FIGHTING"
             elif mag >= 5.0:
-                label = "🟡 SUSPICIOUS"
+                label = " SUSPICIOUS"
             else:
-                label = "🟢 Normal"
+                label = " Normal"
             print(f"{mag:>8.2f} {var:>6.3f} {pts:>5}  {label}", flush=True)
 
 cap.release()

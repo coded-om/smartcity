@@ -1,28 +1,3 @@
-"""
-threat_detector.py — Real-time Threat Detection for Raspberry Pi 5
-====================================================================
-
-Two-layer pipeline optimised for CPU-only inference:
-
-  Layer 1 — Weapon detection (YOLOv8n ONNX)
-      Detects knives, guns, rifles, scissors in each frame.
-      ~180ms/frame on RPi5 with ONNX runtime.
-
-  Layer 2 — Behaviour analysis (Lucas-Kanade Optical Flow)
-      Tracks motion between consecutive frames per camera.
-      ~5ms/frame using sparse LK — no GPU required.
-
-      Heuristics:
-        magnitude > FIGHT_MAG  AND variance > FIGHT_VAR  → FIGHTING
-        magnitude > RUN_MAG                               → SUSPICIOUS_MOVEMENT
-
-  Results are emitted via Flask-SocketIO for instant UI update (<1s latency).
-
-Usage (called from face_recognition_engine._process_and_handle):
-    result = analyze_frame(camera_id, frame_bgr, weapon_detections)
-    # {'threat_type': 'FIGHTING', 'confidence': 0.82, 'severity': 'HIGH', ...}
-    # or None if no threat.
-"""
 
 import json
 import threading
@@ -33,7 +8,6 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-# OpenCV is required for optical flow — already in requirements.txt
 try:
     import cv2
     CV2_AVAILABLE = True
@@ -41,33 +15,20 @@ except Exception:
     cv2 = None
     CV2_AVAILABLE = False
 
-# ── Optical-flow thresholds ────────────────────────────────────────────────
-# Tuned for 640×480 @ 5fps on RPi5.
-# Raise FIGHT_MAG / RUN_MAG if you get too many false positives.
 FIGHT_MAG   = float(15.0)   # mean motion magnitude to trigger FIGHTING (calibrated for EZVIZ cam)
-FIGHT_VAR   = float(0.30)   # circular variance [0-1]; set low — VAR is always 0.7+ on this camera so MAG is the real discriminator
+FIGHT_VAR   = float(0.30)   # circular variance [0-1]; set low  VAR is always 0.7+ on this camera so MAG is the real discriminator
 RUN_MAG     = float(8.0)    # mean motion magnitude to trigger SUSPICIOUS_MOVEMENT
-MIN_CORNERS = 20            # minimum trackable corners; below this → skip frame
+MIN_CORNERS = 20            # minimum trackable corners; below this  skip frame
 
-# ── Weapon → threat mapping ────────────────────────────────────────────────
 WEAPON_CLASSES = {'knife', 'gun', 'pistol', 'rifle', 'scissors'}
 
-# ── Per-camera state ───────────────────────────────────────────────────────
-# Stores previous grayscale frame and corner points for Lucas-Kanade tracking.
 _flow_state: Dict[int, dict] = {}
 _flow_lock  = threading.Lock()
 
-# Frame-skip counter: run behaviour analysis every N frames to save CPU.
 _frame_counters: Dict[int, int] = {}
 BEHAVIOUR_EVERY_N = 3   # ~1 behaviour check per 15s at 5fps (3×5s interval)
 
-# ── Snapshot directory ─────────────────────────────────────────────────────
 _DETECTIONS_DIR = Path(__file__).parent / 'data' / 'detections'
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Internal helpers
-# ═══════════════════════════════════════════════════════════════════════════
 
 def _save_snapshot(camera_id: int, frame_bgr: np.ndarray,
                    threat_type: str) -> Optional[str]:
@@ -82,9 +43,7 @@ def _save_snapshot(camera_id: int, frame_bgr: np.ndarray,
     except Exception:
         return None
 
-
 def _corners(gray: np.ndarray) -> Optional[np.ndarray]:
-    """Find good corners to track with Shi-Tomasi detector."""
     pts = cv2.goodFeaturesToTrack(
         gray,
         maxCorners=150,
@@ -93,7 +52,6 @@ def _corners(gray: np.ndarray) -> Optional[np.ndarray]:
         blockSize=7,
     )
     return pts
-
 
 def _analyse_flow(prev_gray: np.ndarray, curr_gray: np.ndarray,
                   prev_pts: np.ndarray) -> Optional[dict]:
@@ -124,7 +82,6 @@ def _analyse_flow(prev_gray: np.ndarray, curr_gray: np.ndarray,
     angles     = np.arctan2(delta[:, 1], delta[:, 0])
 
     mean_mag = float(np.mean(magnitudes))
-    # Circular variance of angles (0=aligned, 1=completely random)
     dir_variance = float(1.0 - abs(np.mean(np.exp(1j * angles))))
 
     return {
@@ -132,11 +89,6 @@ def _analyse_flow(prev_gray: np.ndarray, curr_gray: np.ndarray,
         'variance':  dir_variance,
         'n_points':  len(good_curr),
     }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Public API
-# ═══════════════════════════════════════════════════════════════════════════
 
 def analyze_frame(camera_id: int,
                   frame_bgr: np.ndarray,
@@ -157,13 +109,12 @@ def analyze_frame(camera_id: int,
             severity      : 'CRITICAL' | 'HIGH' | 'MEDIUM'
             source        : 'weapon' | 'behaviour'
             snapshot_path : str | None
-            flow          : dict | None  (debug — magnitude, variance)
+            flow          : dict | None  (debug  magnitude, variance)
         or None if the frame is safe.
     """
     if not CV2_AVAILABLE or frame_bgr is None:
         return None
 
-    # ── Layer 1: Weapon check (instant — weapons already detected by YOLO) ─
     weapon_hits = [d for d in weapon_detections
                    if d.get('class_name', '').lower() in WEAPON_CLASSES]
     if weapon_hits:
@@ -181,11 +132,9 @@ def analyze_frame(camera_id: int,
             'timestamp':     datetime.now().isoformat(),
         }
 
-    # ── Layer 2: Behaviour via Optical Flow ───────────────────────────────
     with _flow_lock:
         _frame_counters[camera_id] = _frame_counters.get(camera_id, 0) + 1
         if _frame_counters[camera_id] % BEHAVIOUR_EVERY_N != 0:
-            # Update state but skip expensive analysis this tick
             gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
             _flow_state[camera_id] = {
                 'gray': gray,
@@ -202,7 +151,6 @@ def analyze_frame(camera_id: int,
 
         flow = _analyse_flow(state['gray'], curr_gray, state.get('pts'))
 
-        # Update state for next tick
         _flow_state[camera_id] = {'gray': curr_gray, 'pts': _corners(curr_gray)}
 
     if flow is None:
@@ -243,9 +191,7 @@ def analyze_frame(camera_id: int,
 
     return None
 
-
 def reset_camera(camera_id: int) -> None:
-    """Clear per-camera flow state (call when camera is stopped/restarted)."""
     with _flow_lock:
         _flow_state.pop(camera_id, None)
         _frame_counters.pop(camera_id, None)
