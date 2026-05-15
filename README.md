@@ -1,12 +1,18 @@
 # Smart City Security System
 
-An AI-powered IoT security monitoring platform that combines:
+An AI-powered IoT security monitoring platform built with Flask, React, and MicroPython.
 
-- **ESP32 sensor data ingestion** (MQTT)
-- **Backend anomaly detection** (Flask + Isolation Forest)
-- **Live camera preview/recording** (RTSP via ffmpeg/OpenCV)
-- **Web dashboard** (React)
-- **Alerting + forensic logs**
+---
+
+## Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Backend | Python 3.10+, Flask 3.0, Flask-SocketIO, SQLite |
+| AI | YOLOv8n (ONNX), Isolation Forest, Face Recognition |
+| Frontend | React 18, Tailwind CSS, Lucide React, Recharts |
+| IoT | ESP32 + MicroPython, MQTT (Mosquitto) |
+| Camera | RTSP via FFmpeg/OpenCV, MediaMTX |
 
 ---
 
@@ -14,63 +20,87 @@ An AI-powered IoT security monitoring platform that combines:
 
 ```text
 smartcity/
-├── backend/         # Flask API, AI engine, recorder, notifier
-├── frontend/        # React dashboard
-├── esp32/           # MicroPython firmware
-├── run_backend.sh   # Backend launcher
-├── deploy.sh        # Deployment helper
-└── test_phase1.sh   # Basic test script
+├── backend/
+│   ├── app.py                  # Flask app factory + startup
+│   ├── ai_engine.py            # Isolation Forest anomaly detection
+│   ├── object_detector.py      # YOLOv8n weapon/object detection
+│   ├── face_recognition_engine.py
+│   ├── threat_detector.py      # Optical flow + weapon threat detection
+│   ├── mqtt_handler.py         # MQTT ingestion pipeline
+│   ├── recorder.py             # RTSP recording + snapshot capture
+│   ├── notifier.py             # Telegram alerts
+│   ├── db.py                   # SQLite schema + helpers
+│   ├── config.py               # Environment config
+│   ├── state.py                # Shared mutable state
+│   ├── stream_buffer.py        # Live stream frame buffer
+│   ├── routes/                 # API blueprints
+│   │   ├── sensors.py
+│   │   ├── cameras.py
+│   │   ├── persons.py
+│   │   └── analytics.py
+│   ├── data/
+│   │   ├── detections/         # Threat snapshot images
+│   │   └── persons/            # Face encodings + photos
+│   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── App.js
+│   │   ├── components/         # Dashboard pages + UI components
+│   │   └── lib/utils.js
+│   └── package.json
+└── esp32/
+    ├── main.py                 # ESP32 Device 1 firmware
+    └── esp32_2.py              # ESP32 Device 2 firmware
 ```
 
 ---
 
 ## Features
 
-- Multi-sensor ingestion (temperature, humidity, gas, microphone, motion)
-- Device-aware AI anomaly detection
-- Alert severity classification
-- Forensic alert history + video evidence
-- Live camera stream and fallback snapshot preview
-- Camera diagnostics:
-	- RTSP connectivity
-	- Snapshot success
-	- Stream success
-	- Preview latency
+- Multi-sensor ingestion — temperature, humidity, gas, sound, motion (via MQTT)
+- Device-aware AI anomaly detection with auto-retraining (APScheduler)
+- YOLOv8n real-time object detection (weapons, suspicious items)
+- Optical-flow threat detection for fighting/suspicious movement
+- Face recognition enrollment and live identification
+- Alert severity classification (LOW / MEDIUM / HIGH / CRITICAL)
+- Forensic alert history with video/snapshot evidence
+- Live camera preview with RTSP stream buffering
+- Telegram bot notifications for high-severity alerts
+- Real-time WebSocket dashboard (Socket.IO)
 
 ---
 
 ## Requirements
 
-- Linux (recommended)
+- Linux
 - Python 3.10+
 - Node.js 18+
-- ffmpeg
-- MQTT broker (e.g., Mosquitto on localhost:1883)
-
-Install ffmpeg if needed:
+- FFmpeg
+- MQTT broker (Mosquitto on `localhost:1883`)
 
 ```bash
-sudo apt update
-sudo apt install -y ffmpeg
+sudo apt update && sudo apt install -y ffmpeg mosquitto mosquitto-clients
 ```
 
 ---
 
 ## Backend Setup
 
-From the project root:
-
 ```bash
+cd smartcity
 python3 -m venv venv
 source venv/bin/activate
 pip install -r backend/requirements.txt
 ```
 
-Run backend:
+Run:
 
 ```bash
-./run_backend.sh
+cd backend
+python app.py
 ```
+
+API available at `http://127.0.0.1:5000`
 
 ---
 
@@ -82,84 +112,58 @@ npm install
 npm start
 ```
 
-Dashboard opens at:
-
-- `http://localhost:3000`
-
-Backend API runs at:
-
-- `http://127.0.0.1:5000`
+Dashboard at `http://localhost:3000`
 
 ---
 
-## Environment Configuration
+## Environment Variables
 
-Create/update `.env` in project root.
-
-Camera + preview tuning example:
+Create a `.env` file in the project root:
 
 ```env
-DEFAULT_CAMERA_DEVICE_ID=ESP32_Factory01
-CAMERA_ESP32_Factory01=rtsp://username:password@camera_ip:554/h264_stream
+# Telegram alerts
+TELEGRAM_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
 
+# Camera RTSP streams
+DEFAULT_CAMERA_DEVICE_ID=cam_1
+CAMERA_cam_1=rtsp://user:pass@camera_ip:554/stream
+
+# Preview tuning
 CAMERA_PREVIEW_WIDTH=240
 CAMERA_PREVIEW_JPEG_QUALITY=28
 CAMERA_PREVIEW_INTERVAL=2.5
 ```
 
-> `CAMERA_PREVIEW_WIDTH`, `CAMERA_PREVIEW_JPEG_QUALITY`, and `CAMERA_PREVIEW_INTERVAL`
-> are useful knobs for stream stability on slower systems/networks.
-
 ---
 
 ## ESP32 Firmware
 
-Edit `esp32/main.py`:
+Edit `esp32/main.py` (Device 1) or `esp32/esp32_2.py` (Device 2):
 
-- `DEVICE_ID`
-- WiFi credentials
-- MQTT broker IP
-
-Then flash/upload to your ESP32 board.
-
----
-
-## Common Commands
-
-Run backend:
-
-```bash
-./run_backend.sh
+```python
+DEVICE_ID = "ESP32_1"
+WIFI_SSID = "your_wifi"
+WIFI_PASSWORD = "your_password"
+MQTT_BROKER = "192.168.x.x"
 ```
 
-Run frontend:
-
-```bash
-cd frontend && npm start
-```
-
-Clean snapshots:
-
-```bash
-cd backend/recordings && rm -f *.jpg
-```
+Upload to your ESP32 board via [Thonny](https://thonny.org) or `mpremote`.
 
 ---
 
 ## Troubleshooting
 
-- **Port 5000 in use**: backend launcher auto-tries nearby ports.
-- **No camera preview**:
-	- verify RTSP URL
-	- verify ffmpeg installed
-	- check dashboard diagnostics cards
-- **High preview latency**:
-	- lower `CAMERA_PREVIEW_WIDTH`
-	- increase `CAMERA_PREVIEW_INTERVAL`
-	- increase JPEG quality value (more compression)
+| Problem | Fix |
+|---------|-----|
+| Port 5000 in use | Kill the process using that port or change `PORT` in `config.py` |
+| No camera preview | Verify RTSP URL, check FFmpeg is installed, review dashboard diagnostics |
+| High preview latency | Lower `CAMERA_PREVIEW_WIDTH`, increase `CAMERA_PREVIEW_INTERVAL` |
+| MQTT not receiving | Check Mosquitto is running: `sudo systemctl status mosquitto` |
+| AI model not training | Need at least 10 readings per device in the database |
 
 ---
 
 ## License
 
-Internal/Project use unless specified otherwise.
+Internal / Project use.
