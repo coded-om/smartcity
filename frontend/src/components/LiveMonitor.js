@@ -3,80 +3,84 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   RadialBarChart, RadialBar,
 } from 'recharts';
+import Grid from '@mui/material/Grid';
+import Box from '@mui/material/Box';
+import Card from '@mui/material/Card';
+import CardContent from '@mui/material/CardContent';
+import CardHeader from '@mui/material/CardHeader';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import Button from '@mui/material/Button';
+import ButtonGroup from '@mui/material/ButtonGroup';
+import Collapse from '@mui/material/Collapse';
+import Divider from '@mui/material/Divider';
+import IconButton from '@mui/material/IconButton';
+import { alpha } from '@mui/material/styles';
+import { useTheme } from '@mui/material/styles';
 import {
   Thermometer, Droplets, Wind, Mic, Move, Cpu,
   Radio, Camera,
 } from 'lucide-react';
 import Hls from 'hls.js';
 import { apiFetch, getApiBase, getHlsStreamUrl } from '../apiBase';
-import { cn, alertTypeIcon } from '../lib/utils';
+import { alertTypeIcon } from '../lib/utils';
 
 const SENSOR_META = [
-  { key: 'temperature', label: 'Temperature', unit: '\u00b0C',  Icon: Thermometer, warnAt: 35,   critAt: 55,   max: 80,   color: '#e56b6f' },
-  { key: 'humidity',    label: 'Humidity',    unit: '%',   Icon: Droplets,     warnAt: 70,   critAt: 90,   max: 100,  color: '#355070' },
-  { key: 'gas',         label: 'Gas (MQ-2)',  unit: '',    Icon: Wind,         warnAt: 2100, critAt: 3000, max: 4095, color: '#eaac8b' },
-  { key: 'mic',         label: 'Microphone',  unit: '',    Icon: Mic,          warnAt: 800,  critAt: 3500, max: 4095, color: '#6d597a' },
+  { key: 'temperature', label: 'Temperature', unit: '°C',  Icon: Thermometer, warnAt: 35,   critAt: 55,   max: 80,   color: '#ef4444' },
+  { key: 'humidity',    label: 'Humidity',    unit: '%',   Icon: Droplets,     warnAt: 70,   critAt: 90,   max: 100,  color: '#1565C0' },
+  { key: 'gas',         label: 'Gas (MQ-2)',  unit: '',    Icon: Wind,         warnAt: 2100, critAt: 3000, max: 4095, color: '#f59e0b' },
+  { key: 'mic',         label: 'Microphone',  unit: '',    Icon: Mic,          warnAt: 800,  critAt: 3500, max: 4095, color: '#8b5cf6' },
 ];
 
 const HISTORY_MAX = 60;
 
 function SensorGauge({ meta, value }) {
+  const theme = useTheme();
   const { label, unit, Icon, warnAt, critAt, max, color } = meta;
-  const pct     = Math.min(100, Math.round(((value || 0) / max) * 100));
+  const pct      = Math.min(100, Math.round(((value || 0) / max) * 100));
   const isDanger = value >= critAt;
   const isWarn   = !isDanger && value >= warnAt;
-  const gaugeColor = isDanger ? '#b56576' : isWarn ? '#eaac8b' : color;
-
-  const data = [{ name: label, value: pct, fill: gaugeColor }];
+  const gaugeColor = isDanger ? theme.palette.error.main : isWarn ? theme.palette.warning.main : color;
 
   return (
-    <div className={cn(
-      'bg-surface-600 border rounded-2xl p-4 flex flex-col items-center transition-all',
-      isDanger ? 'border-accent-500/40 shadow-glow-accent' :
-      isWarn   ? 'border-coral-500/40 shadow-glow-coral' : 'border-surface-500',
-    )}>
-      <div className="relative w-28 h-28">
+    <Box
+      sx={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5, p: 2,
+        borderRadius: 3, border: '1px solid',
+        borderColor: isDanger ? 'error.light' : isWarn ? 'warning.light' : 'divider',
+        bgcolor: isDanger ? alpha(theme.palette.error.main, 0.06) : isWarn ? alpha(theme.palette.warning.main, 0.06) : 'background.default',
+        transition: 'all 0.3s',
+      }}
+    >
+      <Box sx={{ position: 'relative', width: 100, height: 100 }}>
         <RadialBarChart
-          width={112} height={112}
-          cx={56} cy={56}
-          innerRadius={36} outerRadius={50}
+          width={100} height={100} cx={50} cy={50}
+          innerRadius={32} outerRadius={46}
           startAngle={90} endAngle={-270}
-          data={[{ value: 100, fill: '#1a1932' }, { value: pct, fill: gaugeColor }]}
+          data={[{ value: 100, fill: alpha(gaugeColor, 0.1) }, { value: pct, fill: gaugeColor }]}
         >
           <RadialBar dataKey="value" cornerRadius={6} />
         </RadialBarChart>
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <Icon size={13} style={{ color: gaugeColor }} className="mb-0.5" />
-          <p className="text-white text-xs font-bold leading-none">
-            {value !== undefined && value !== null ? `${value}${unit}` : '—'}
-          </p>
-        </div>
-      </div>
-      <p className="text-slate-400 text-xs mt-1">{label}</p>
-      <span className={cn(
-        'text-[10px] font-bold px-2 py-0.5 rounded-full mt-1',
-        isDanger ? 'bg-accent-500/20 text-accent-300' :
-        isWarn   ? 'bg-coral-500/20 text-coral-300' : 'bg-emerald-500/20 text-emerald-300',
-      )}>
-        {isDanger ? 'CRITICAL' : isWarn ? 'WARNING' : 'NORMAL'}
-      </span>
-    </div>
-  );
-}
-
-function CustomTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-surface-700 border border-surface-500 rounded-lg px-3 py-2 text-xs text-white shadow-xl">
-      <p className="text-slate-400 mb-1">{label}</p>
-      {payload.map(p => (
-        <p key={p.name} style={{ color: p.color }}>{p.name}: {p.value}</p>
-      ))}
-    </div>
+        <Box sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <Icon size={12} color={gaugeColor} />
+          <Typography variant="caption" fontWeight={700} sx={{ fontSize: '0.65rem', lineHeight: 1.2 }}>
+            {value != null ? `${value}${unit}` : '—'}
+          </Typography>
+        </Box>
+      </Box>
+      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>{label}</Typography>
+      <Chip
+        label={isDanger ? 'CRITICAL' : isWarn ? 'WARNING' : 'NORMAL'}
+        color={isDanger ? 'error' : isWarn ? 'warning' : 'success'}
+        size="small"
+        sx={{ height: 16, fontSize: '0.6rem', fontWeight: 700 }}
+      />
+    </Box>
   );
 }
 
 function DevicePanel({ device }) {
+  const theme = useTheme();
   const [reading,  setReading]  = useState(null);
   const [history,  setHistory]  = useState([]);
   const [camState, setCamState] = useState('idle');
@@ -138,128 +142,120 @@ function DevicePanel({ device }) {
   const online = device.online === true;
 
   return (
-    <div className="bg-surface-700 border border-surface-500 rounded-2xl overflow-hidden">
-      {}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-surface-500 bg-surface-800">
-        <div className="flex items-center gap-3">
-          <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', online ? 'bg-emerald-400 animate-pulse' : 'bg-accent-500')} />
-          <div>
-            <p className="text-white font-semibold text-sm">{devId}</p>
-            <p className="text-slate-500 text-xs">{device.location || 'Unknown'}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {reading?.alert_type && reading.alert_type !== 'NORMAL' && (
-            <div className="shrink-0">{alertTypeIcon(reading.alert_type)}</div>
-          )}
-          <span className={cn(
-            'text-[10px] font-bold px-2 py-0.5 rounded-full border',
-            online ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-accent-500/20 text-accent-300 border-accent-500/30',
-          )}>
-            {online ? 'ONLINE' : 'OFFLINE'}
-          </span>
-        </div>
-      </div>
+    <Card>
+      {/* Header */}
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: online ? 'success.main' : 'error.main', flexShrink: 0 }} />
+          <Box>
+            <Typography variant="subtitle2" fontWeight={700}>{devId}</Typography>
+            <Typography variant="caption" color="text.secondary">{device.location || 'Unknown'}</Typography>
+          </Box>
+        </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {reading?.alert_type && reading.alert_type !== 'NORMAL' && alertTypeIcon(reading.alert_type, 16)}
+          <Chip label={online ? 'ONLINE' : 'OFFLINE'} color={online ? 'success' : 'error'} size="small" variant="outlined" sx={{ fontSize: '0.6rem' }} />
+        </Box>
+      </Box>
 
-      <div className="p-4 space-y-4">
-        {}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <CardContent sx={{ '&:last-child': { pb: 2 } }}>
+        {/* Sensor gauges */}
+        <Grid container spacing={1.5} sx={{ mb: 2 }}>
           {SENSOR_META.map(meta => (
-            <SensorGauge key={meta.key} meta={meta} value={reading?.[meta.key]} />
+            <Grid item xs={6} sm={3} key={meta.key}>
+              <SensorGauge meta={meta} value={reading?.[meta.key]} />
+            </Grid>
           ))}
-        </div>
+        </Grid>
 
-        {}
-        <div className="grid grid-cols-2 gap-3">
-          <div className={cn(
-            'flex items-center gap-3 rounded-xl p-3 border',
-            reading?.motion ? 'bg-bronze-500/10 border-bronze-500/30' : 'bg-surface-600 border-surface-500',
-          )}>
-            <Move size={20} className={reading?.motion ? 'text-bronze-400' : 'text-slate-500'} />
-            <div>
-              <p className="text-slate-400 text-xs">Motion</p>
-              <p className={cn('text-sm font-bold', reading?.motion ? 'text-bronze-300' : 'text-slate-300')}>
-                {reading?.motion ? 'Detected' : 'Clear'}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 bg-surface-600 border border-surface-500 rounded-xl p-3">
-            <Cpu size={20} className="text-secondary-300" />
-            <div>
-              <p className="text-slate-400 text-xs">AI Score</p>
-              <p className="text-sm font-bold text-secondary-200">
-                {reading?.ai_score != null ? reading.ai_score.toFixed(4) : 'Training…'}
-              </p>
-            </div>
-          </div>
-        </div>
+        {/* Motion + AI Score */}
+        <Grid container spacing={1.5} sx={{ mb: 2 }}>
+          <Grid item xs={6}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, borderRadius: 2, border: '1px solid', borderColor: reading?.motion ? 'warning.light' : 'divider', bgcolor: reading?.motion ? alpha(theme.palette.warning.main, 0.08) : 'background.default' }}>
+              <Move size={20} color={reading?.motion ? theme.palette.warning.main : theme.palette.text.disabled} />
+              <Box>
+                <Typography variant="caption" color="text.secondary">Motion</Typography>
+                <Typography variant="body2" fontWeight={600} color={reading?.motion ? 'warning.main' : 'text.primary'}>{reading?.motion ? 'Detected' : 'Clear'}</Typography>
+              </Box>
+            </Box>
+          </Grid>
+          <Grid item xs={6}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+              <Cpu size={20} color={theme.palette.secondary.main} />
+              <Box>
+                <Typography variant="caption" color="text.secondary">AI Score</Typography>
+                <Typography variant="body2" fontWeight={600}>{reading?.ai_score != null ? reading.ai_score.toFixed(4) : 'Training…'}</Typography>
+              </Box>
+            </Box>
+          </Grid>
+        </Grid>
 
-        {}
+        {/* Trend chart */}
         {history.length >= 3 && (
-          <div>
-            <p className="text-xs text-slate-500 mb-2">Live Trends (last {history.length} readings)</p>
-            <div style={{ height: 120 }}>
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="caption" color="text.secondary">Live Trends (last {history.length} readings)</Typography>
+            <Box sx={{ height: 120, mt: 0.5 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={history} margin={{ top: 2, right: 4, left: -30, bottom: 0 }}>
                   <XAxis dataKey="t" tick={false} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Line type="monotone" dataKey="temperature" stroke="#e56b6f" dot={false} strokeWidth={1.5} name="Temp" />
-                  <Line type="monotone" dataKey="humidity"    stroke="#355070" dot={false} strokeWidth={1.5} name="Humid" />
-                  <Line type="monotone" dataKey="gas"         stroke="#eaac8b" dot={false} strokeWidth={1.5} name="Gas" />
-                  <Line type="monotone" dataKey="mic"         stroke="#6d597a" dot={false} strokeWidth={1.5} name="Mic" />
+                  <YAxis tick={{ fill: theme.palette.text.disabled, fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={{ background: theme.palette.background.paper, border: `1px solid ${theme.palette.divider}`, borderRadius: 8, fontSize: 11 }} />
+                  <Line type="monotone" dataKey="temperature" stroke="#ef4444" dot={false} strokeWidth={1.5} name="Temp" />
+                  <Line type="monotone" dataKey="humidity"    stroke="#1565C0" dot={false} strokeWidth={1.5} name="Humid" />
+                  <Line type="monotone" dataKey="gas"         stroke="#f59e0b" dot={false} strokeWidth={1.5} name="Gas" />
+                  <Line type="monotone" dataKey="mic"         stroke="#8b5cf6" dot={false} strokeWidth={1.5} name="Mic" />
                 </LineChart>
               </ResponsiveContainer>
-            </div>
-          </div>
+            </Box>
+          </Box>
         )}
 
-        {}
-        <div className="border border-surface-500 rounded-xl overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-2 bg-surface-800 border-b border-surface-500">
-            <div className="flex items-center gap-2 text-slate-400 text-sm">
-              <Camera size={14} /> Camera Feed
-            </div>
-            <button onClick={loadDiagnostics} className="text-xs text-slate-500 hover:text-white transition-colors">
-              Diagnostics
-            </button>
-          </div>
+        {/* Camera feed */}
+        <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 2, py: 1, bgcolor: 'action.hover' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Camera size={14} color={theme.palette.text.secondary} />
+              <Typography variant="caption" color="text.secondary">Camera Feed</Typography>
+            </Box>
+            <Button size="small" variant="text" onClick={loadDiagnostics} sx={{ fontSize: '0.7rem', py: 0 }}>Diagnostics</Button>
+          </Box>
           {camState === 'ok' ? (
-            <video ref={videoRef} className="w-full bg-black" muted playsInline controls style={{ maxHeight: 240 }} />
+            <Box component="video" ref={videoRef} muted playsInline controls sx={{ width: '100%', bgcolor: '#000', maxHeight: 240, display: 'block' }} />
           ) : (
-            <div className="bg-black/60 flex flex-col items-center justify-center py-10 gap-2">
-              <Camera size={30} className="text-slate-600" />
-              <p className="text-slate-600 text-xs">
+            <Box sx={{ bgcolor: 'black', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 6, gap: 1 }}>
+              <Camera size={30} color="#666" />
+              <Typography variant="caption" color="text.disabled">
                 {camState === 'loading' ? 'Connecting to camera…' : 'No camera configured'}
-              </p>
+              </Typography>
               {camState === 'error' && (
-                <button
+                <Button
+                  size="small" color="primary"
                   onClick={async () => {
                     const base = await getApiBase();
                     const url = `${base}/api/cameras/${devId}/snapshot`;
                     if (videoRef.current) videoRef.current.src = url;
                     setCamState('ok');
                   }}
-                  className="text-xs text-primary-400 hover:text-primary-300"
+                  sx={{ fontSize: '0.7rem' }}
                 >
                   Try snapshot
-                </button>
+                </Button>
               )}
-            </div>
+            </Box>
           )}
-          {diagOpen && diag && (
-            <div className="bg-surface-900 px-4 py-3 text-xs space-y-1">
-              {Object.entries(diag).map(([k, v]) => (
-                <div key={k} className="flex justify-between">
-                  <span className="text-slate-500">{k}</span>
-                  <span className="text-slate-300">{String(v)}</span>
-                </div>
+          <Collapse in={diagOpen && !!diag}>
+            <Box sx={{ px: 2, py: 1.5, bgcolor: 'background.default' }}>
+              {diag && Object.entries(diag).map(([k, v]) => (
+                <Box key={k} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.25 }}>
+                  <Typography variant="caption" color="text.secondary">{k}</Typography>
+                  <Typography variant="caption">{String(v)}</Typography>
+                </Box>
               ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+            </Box>
+          </Collapse>
+        </Box>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -271,47 +267,48 @@ function LiveMonitor({ devices }) {
   const displayed  = selected ? [selected] : allDevices;
 
   return (
-    <div className="space-y-4 animate-fade-in">
-      {}
+    <Box sx={{ animation: 'fadeIn 0.3s ease-out' }}>
+      {/* Device filter tabs */}
       {allDevices.length > 1 && (
-        <div className="flex flex-wrap gap-2">
-          <button
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+          <Chip
+            label="All Devices"
             onClick={() => setSelectedId(null)}
-            className={cn(
-              'px-4 py-2 rounded-lg text-sm font-medium transition-all border',
-              !selectedId ? 'bg-primary-500/20 text-primary-300 border-primary-500/30' : 'bg-surface-600 text-slate-400 border-surface-500 hover:text-white',
-            )}
-          >
-            All Devices
-          </button>
+            color={!selectedId ? 'primary' : 'default'}
+            variant={!selectedId ? 'filled' : 'outlined'}
+            clickable
+          />
           {allDevices.map(d => (
-            <button
+            <Chip
               key={d.device_id}
+              label={d.device_id}
               onClick={() => setSelectedId(d.device_id)}
-              className={cn(
-                'px-4 py-2 rounded-lg text-sm font-medium transition-all border flex items-center gap-2',
-                selectedId === d.device_id ? 'bg-primary-500/20 text-primary-300 border-primary-500/30' : 'bg-surface-600 text-slate-400 border-surface-500 hover:text-white',
-              )}
-            >
-              <span className={cn('w-2 h-2 rounded-full shrink-0', d.online ? 'bg-emerald-400' : 'bg-accent-500')} />
-              {d.device_id}
-            </button>
+              color={selectedId === d.device_id ? 'primary' : 'default'}
+              variant={selectedId === d.device_id ? 'filled' : 'outlined'}
+              clickable
+              avatar={<Box component="span" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: d.online ? 'success.main' : 'error.main', ml: '6px !important' }} />}
+            />
           ))}
-        </div>
+        </Box>
       )}
 
       {displayed.length === 0 ? (
-        <div className="text-center py-20 text-slate-500">
-          <Radio size={44} className="mx-auto mb-4 text-slate-600" />
-          <p>No devices found</p>
-        </div>
+        <Box sx={{ textAlign: 'center', py: 10 }}>
+          <Radio size={44} color="#ccc" />
+          <Typography variant="body2" color="text.disabled" mt={1}>No devices found</Typography>
+        </Box>
       ) : (
-        <div className={cn('grid gap-6', displayed.length > 1 ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1')}>
-          {displayed.map(d => <DevicePanel key={d.device_id} device={d} />)}
-        </div>
+        <Grid container spacing={2}>
+          {displayed.map(d => (
+            <Grid item xs={12} xl={displayed.length > 1 ? 6 : 12} key={d.device_id}>
+              <DevicePanel device={d} />
+            </Grid>
+          ))}
+        </Grid>
       )}
-    </div>
+    </Box>
   );
 }
 
 export default LiveMonitor;
+

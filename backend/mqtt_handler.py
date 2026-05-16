@@ -160,6 +160,13 @@ def on_message(client, userdata, msg) -> None:
         emoji = '[ALERT]' if alert_type not in ('NORMAL', 'TRAINING') else ''
         print(f"{emoji} Saved reading from {device_id} [{alert_type}]")
 
+        # Push real-time update to all connected UI clients
+        try:
+            from socketio_instance import socketio as _sio
+            _sio.emit('sensor_reading', latest_readings[device_id])
+        except Exception:
+            pass
+
     except Exception as exc:
         print(f"[ERROR] MQTT handler error: {exc}")
 

@@ -3,117 +3,103 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
   PieChart, Pie, Legend,
 } from 'recharts';
+import Box from '@mui/material/Box';
+import Grid from '@mui/material/Grid';
+import Card from '@mui/material/Card';
+import CardContent from '@mui/material/CardContent';
+import CardHeader from '@mui/material/CardHeader';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import Button from '@mui/material/Button';
+import Avatar from '@mui/material/Avatar';
+import Alert from '@mui/material/Alert';
+import Divider from '@mui/material/Divider';
+import IconButton from '@mui/material/IconButton';
+import { alpha } from '@mui/material/styles';
+import { useTheme } from '@mui/material/styles';
 import {
   Cpu, AlertTriangle, CheckCircle, Zap,
   RefreshCw, TrendingUp, TrendingDown, Clock,
 } from 'lucide-react';
 import { apiFetch } from '../apiBase';
-import { cn, severityBg } from '../lib/utils';
+import { severityColor } from '../lib/utils';
 
-const SEVERITY_COLORS = {
-  CRITICAL: '#b56576',
-  HIGH:     '#e56b6f',
-  MEDIUM:   '#eaac8b',
-  LOW:      '#10b981',
-};
+const SEVERITY_COLORS = { CRITICAL: '#ef4444', HIGH: '#f97316', MEDIUM: '#3b82f6', LOW: '#22c55e' };
+const TYPE_COLORS     = { FIRE: '#ef4444', GAS_LEAK: '#f59e0b', EXPLOSION: '#f97316', INTRUDER: '#3b82f6', ANOMALY: '#8b5cf6', NORMAL: '#22c55e' };
 
-const TYPE_COLORS = {
-  FIRE:      '#e56b6f',
-  GAS_LEAK:  '#eaac8b',
-  EXPLOSION: '#b56576',
-  INTRUDER:  '#6d597a',
-  ANOMALY:   '#355070',
-  NORMAL:    '#10b981',
-};
-
-function StatCard({ icon: Icon, label, value, sub, colorClass }) {
+function StatCard({ icon: Icon, label, value, sub, color }) {
+  const theme = useTheme();
   return (
-    <div className="flex items-center gap-4 bg-surface-600 rounded-2xl p-5 border border-surface-500 hover:shadow-card-hover transition-shadow">
-      <div className={cn('flex items-center justify-center w-12 h-12 rounded-xl', colorClass)}>
-        <Icon size={22} />
-      </div>
-      <div>
-        <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">{label}</p>
-        <p className="text-white text-2xl font-bold mt-0.5">{value}</p>
-        {sub && <p className="text-slate-500 text-xs mt-0.5">{sub}</p>}
-      </div>
-    </div>
+    <Card sx={{ height: '100%' }}>
+      <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Avatar sx={{ bgcolor: alpha(theme.palette[color]?.main || theme.palette.primary.main, 0.12), width: 48, height: 48, borderRadius: 3 }}>
+          <Icon size={22} color={theme.palette[color]?.main || theme.palette.primary.main} />
+        </Avatar>
+        <Box>
+          <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.2 }}>{label}</Typography>
+          <Typography variant="h4" fontWeight={700}>{value}</Typography>
+          {sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}
+        </Box>
+      </CardContent>
+    </Card>
   );
 }
 
 function HourlyHeatmap({ data }) {
-  if (!data?.length) return <p className="text-slate-500 text-sm text-center py-6">No heatmap data</p>;
+  const theme = useTheme();
+  if (!data?.length) return <Typography variant="body2" color="text.disabled" sx={{ textAlign: 'center', py: 4 }}>No heatmap data</Typography>;
   const maxCount = Math.max(...data.map(d => d.count), 1);
-  const cells = Array.from({ length: 24 }, (_, h) => {
-    const entry = data.find(d => d.hour === h);
-    return { hour: h, count: entry?.count || 0 };
-  });
+  const cells    = Array.from({ length: 24 }, (_, h) => ({ hour: h, count: data.find(d => d.hour === h)?.count || 0 }));
   return (
-    <div className="grid grid-cols-12 gap-1">
+    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 0.75 }}>
       {cells.map(({ hour, count }) => {
         const intensity = count / maxCount;
-        const bg = count === 0
-          ? 'bg-surface-700'
-          : intensity > 0.75 ? 'bg-accent-500'
-          : intensity > 0.5  ? 'bg-coral-500'
-          : intensity > 0.25 ? 'bg-bronze-500'
-          : 'bg-primary-500';
+        const bg = count === 0 ? alpha(theme.palette.text.primary, 0.06)
+          : intensity > 0.75 ? theme.palette.error.main
+          : intensity > 0.5  ? theme.palette.warning.main
+          : intensity > 0.25 ? '#f59e0b'
+          : theme.palette.primary.main;
         return (
-          <div key={hour} title={`${hour}:00 — ${count} alerts`}
-            className={cn('aspect-square rounded cursor-pointer transition-transform hover:scale-110', bg, count > 0 ? 'opacity-100' : 'opacity-30')}>
-            <div className="flex items-center justify-center h-full text-[10px] text-white font-bold">
-              {hour}
-            </div>
-          </div>
+          <Box
+            key={hour}
+            title={`${hour}:00 — ${count} alerts`}
+            sx={{ aspectRatio: '1', borderRadius: 1, bgcolor: bg, opacity: count > 0 ? 1 : 0.3, cursor: 'pointer', transition: 'transform 0.15s', '&:hover': { transform: 'scale(1.15)' }, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Typography variant="caption" sx={{ fontSize: '0.55rem', fontWeight: 700, color: '#fff', lineHeight: 1 }}>{hour}</Typography>
+          </Box>
         );
       })}
-    </div>
+    </Box>
   );
 }
 
 function RiskGauge({ deviceId, score, totalAlerts }) {
-  const color = score >= 75 ? '#b56576' : score >= 40 ? '#eaac8b' : '#10b981';
+  const color = score >= 75 ? '#ef4444' : score >= 40 ? '#f97316' : '#22c55e';
   return (
-    <div className="bg-surface-700 border border-surface-500 rounded-xl p-4 text-center">
-      <p className="text-xs text-slate-400 mb-2 truncate">{deviceId}</p>
-      <div className="relative inline-flex items-center justify-center w-20 h-20 mb-2">
-        <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
-          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1a1932" strokeWidth="3.8" />
-          <circle cx="18" cy="18" r="15.9" fill="none"
-            stroke={color} strokeWidth="3.8"
-            strokeDasharray={`${score} 100`} strokeLinecap="round" />
+    <Box sx={{ textAlign: 'center', p: 2, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+      <Typography variant="caption" color="text.secondary" noWrap display="block" sx={{ mb: 1 }}>{deviceId}</Typography>
+      <Box sx={{ position: 'relative', display: 'inline-flex', width: 80, height: 80, mb: 1 }}>
+        <svg viewBox="0 0 36 36" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e0e0e0" strokeWidth="3.8" />
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke={color} strokeWidth="3.8" strokeDasharray={`${score} 100`} strokeLinecap="round" />
         </svg>
-        <span className="absolute text-sm font-bold text-white">{score}</span>
-      </div>
-      <p className="text-[10px] text-slate-500">{totalAlerts} alerts / 24h</p>
-    </div>
-  );
-}
-
-function CustomTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-surface-700 border border-surface-500 rounded-lg px-3 py-2 text-xs text-white shadow-xl">
-      <p className="font-bold mb-1">{label}</p>
-      {payload.map(p => <p key={p.name} style={{ color: p.color }}>{p.name}: {p.value}</p>)}
-    </div>
+        <Typography variant="body2" fontWeight={700} sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{score}</Typography>
+      </Box>
+      <Typography variant="caption" color="text.secondary" display="block">{totalAlerts} alerts/24h</Typography>
+    </Box>
   );
 }
 
 function AIAnalysis({ devices, models, alerts }) {
+  const theme = useTheme();
   const [analytics, setAnalytics] = useState(null);
   const [training,  setTraining]  = useState({});
   const [loading,   setLoading]   = useState(true);
 
   const loadAnalytics = () => {
     setLoading(true);
-    apiFetch('/analytics/security')
-      .then(r => r.json())
-      .then(d => { if (d.success) setAnalytics(d.data); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    apiFetch('/analytics/security').then(r => r.json()).then(d => { if (d.success) setAnalytics(d.data); }).catch(() => {}).finally(() => setLoading(false));
   };
-
   useEffect(() => { loadAnalytics(); }, [alerts?.length]);
 
   const handleTrain = async (deviceId) => {
@@ -123,200 +109,167 @@ function AIAnalysis({ devices, models, alerts }) {
       const d = await r.json();
       setTraining(t => ({ ...t, [deviceId]: d.success ? 'done' : 'error' }));
       if (d.success) loadAnalytics();
-    } catch {
-      setTraining(t => ({ ...t, [deviceId]: 'error' }));
-    }
+    } catch { setTraining(t => ({ ...t, [deviceId]: 'error' })); }
   };
 
-  const totalAlerts     = alerts?.length || 0;
-  const criticalCount   = (alerts || []).filter(a => a.severity === 'CRITICAL').length;
-  const anomalyCount    = (alerts || []).filter(a => a.alert_type === 'ANOMALY').length;
-  const resolvedCount   = (alerts || []).filter(a => a.resolved).length;
-  const trend           = analytics?.trend_24h;
+  const totalAlerts   = alerts?.length || 0;
+  const criticalCount = (alerts || []).filter(a => a.severity === 'CRITICAL').length;
+  const anomalyCount  = (alerts || []).filter(a => a.alert_type === 'ANOMALY').length;
+  const resolvedCount = (alerts || []).filter(a => a.resolved).length;
+  const trend         = analytics?.trend_24h;
 
-  const typeChartData = Object.entries(analytics?.alert_type_counts || {})
-    .map(([type, count]) => ({ type, count }))
-    .filter(d => d.type !== 'NORMAL' && d.type !== 'TRAINING');
-
-  const sevChartData = Object.entries(analytics?.severity_counts || {})
-    .map(([name, value]) => ({ name, value, fill: SEVERITY_COLORS[name] || '#94a3b8' }));
+  const typeChartData = Object.entries(analytics?.alert_type_counts || {}).map(([type, count]) => ({ type, count })).filter(d => d.type !== 'NORMAL' && d.type !== 'TRAINING');
+  const sevChartData  = Object.entries(analytics?.severity_counts  || {}).map(([name, value]) => ({ name, value, fill: SEVERITY_COLORS[name] || '#94a3b8' }));
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={AlertTriangle} label="Total Alerts"  value={totalAlerts}   colorClass="bg-coral-500/10 text-coral-400" />
-        <StatCard icon={Zap}           label="Critical"       value={criticalCount} colorClass="bg-accent-500/10 text-accent-400" />
-        <StatCard icon={Cpu}           label="AI Anomalies"   value={anomalyCount}  colorClass="bg-secondary-500/10 text-secondary-300" />
-        <StatCard icon={CheckCircle}   label="Resolved"       value={resolvedCount} sub={`${totalAlerts - resolvedCount} open`} colorClass="bg-emerald-500/10 text-emerald-400" />
-      </div>
+    <Box sx={{ animation: 'fadeIn 0.3s ease-out' }}>
+      {/* KPIs */}
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={6} sm={3}><StatCard icon={AlertTriangle} label="Total Alerts" value={totalAlerts}   color="warning" /></Grid>
+        <Grid item xs={6} sm={3}><StatCard icon={Zap}           label="Critical"      value={criticalCount} color="error"   /></Grid>
+        <Grid item xs={6} sm={3}><StatCard icon={Cpu}           label="AI Anomalies"  value={anomalyCount}  color="secondary" /></Grid>
+        <Grid item xs={6} sm={3}><StatCard icon={CheckCircle}   label="Resolved"      value={resolvedCount} sub={`${totalAlerts - resolvedCount} open`} color="success" /></Grid>
+      </Grid>
 
-      {}
+      {/* Trend */}
       {trend && (
-        <div className={cn(
-          'flex items-center gap-4 rounded-2xl p-4 border',
-          (trend.change_pct || 0) >= 0
-            ? 'bg-accent-900/30 border-accent-700/30'
-            : 'bg-emerald-950/30 border-emerald-700/30',
-        )}>
-          {(trend.change_pct || 0) >= 0
-            ? <TrendingUp size={22} className="text-accent-400 shrink-0" />
-            : <TrendingDown size={22} className="text-emerald-400 shrink-0" />}
-          <div>
-            <p className={cn('font-bold', (trend.change_pct || 0) >= 0 ? 'text-accent-300' : 'text-emerald-300')}>
-              {Math.abs(trend.change_pct || 0)}% {(trend.change_pct || 0) >= 0 ? 'more' : 'fewer'} alerts than yesterday
-            </p>
-            <p className="text-slate-500 text-sm">
-              Last 24h: {trend.last_24h} alerts · Previous 24h: {trend.prev_24h} alerts
-            </p>
-          </div>
-        </div>
+        <Alert
+          severity={(trend.change_pct || 0) >= 0 ? 'error' : 'success'}
+          icon={(trend.change_pct || 0) >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+          sx={{ mb: 3, fontWeight: 500 }}
+        >
+          {Math.abs(trend.change_pct || 0)}% {(trend.change_pct || 0) >= 0 ? 'more' : 'fewer'} alerts than yesterday — Last 24h: {trend.last_24h} · Previous: {trend.prev_24h}
+        </Alert>
       )}
 
-      {}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {}
-        <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-surface-500">
-            <h3 className="text-white font-semibold">Alert Type Distribution</h3>
-          </div>
-          <div className="p-4" style={{ height: 220 }}>
-            {typeChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={typeChartData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                  <XAxis dataKey="type" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                  <Bar dataKey="count" radius={[4,4,0,0]}>
-                    {typeChartData.map((e, i) => <Cell key={i} fill={TYPE_COLORS[e.type] || '#06b6d4'} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-slate-500 text-sm text-center pt-10">No data</p>
-            )}
-          </div>
-        </div>
+      {/* Charts */}
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={12} lg={6}>
+          <Card sx={{ height: '100%' }}>
+            <CardHeader title={<Typography variant="h6" fontWeight={600}>Alert Type Distribution</Typography>} />
+            <CardContent sx={{ pt: 0 }}>
+              <Box sx={{ height: 200 }}>
+                {typeChartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={typeChartData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                      <XAxis dataKey="type" tick={{ fill: theme.palette.text.secondary, fontSize: 10 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill: theme.palette.text.secondary, fontSize: 10 }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ background: theme.palette.background.paper, border: `1px solid ${theme.palette.divider}`, borderRadius: 8, fontSize: 11 }} cursor={{ fill: alpha(theme.palette.text.primary, 0.04) }} />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                        {typeChartData.map((e, i) => <Cell key={i} fill={TYPE_COLORS[e.type] || theme.palette.primary.main} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : <Typography variant="body2" color="text.disabled" sx={{ textAlign: 'center', pt: 8 }}>No data</Typography>}
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} lg={6}>
+          <Card sx={{ height: '100%' }}>
+            <CardHeader title={<Typography variant="h6" fontWeight={600}>Severity Breakdown</Typography>} />
+            <CardContent sx={{ pt: 0 }}>
+              <Box sx={{ height: 200 }}>
+                {sevChartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={sevChartData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" nameKey="name" paddingAngle={4} />
+                      <Tooltip contentStyle={{ background: theme.palette.background.paper, border: `1px solid ${theme.palette.divider}`, borderRadius: 8, fontSize: 11 }} />
+                      <Legend wrapperStyle={{ fontSize: 11, color: theme.palette.text.secondary }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : <Typography variant="body2" color="text.disabled" sx={{ textAlign: 'center', pt: 8 }}>No data</Typography>}
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
 
-        {}
-        <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-surface-500">
-            <h3 className="text-white font-semibold">Severity Breakdown</h3>
-          </div>
-          <div className="p-4" style={{ height: 220 }}>
-            {sevChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={sevChartData} cx="50%" cy="50%" innerRadius={50} outerRadius={80}
-                    dataKey="value" nameKey="name" paddingAngle={4} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: 11, color: '#94a3b8' }} />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-slate-500 text-sm text-center pt-10">No data</p>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* Hourly Heatmap */}
+      <Card sx={{ mb: 3 }}>
+        <CardHeader
+          title={<Typography variant="h6" fontWeight={600}>Hourly Alert Heatmap</Typography>}
+          subheader="Hour 0–23 — color intensity = alert frequency (last 7 days)"
+        />
+        <CardContent sx={{ pt: 0 }}><HourlyHeatmap data={analytics?.hourly_heatmap} /></CardContent>
+      </Card>
 
-      {}
-      <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-surface-500">
-          <h3 className="text-white font-semibold">Hourly Alert Heatmap (last 7 days)</h3>
-          <p className="text-slate-500 text-xs mt-0.5">Hour 0–23. Color intensity = alert frequency.</p>
-        </div>
-        <div className="p-5">
-          <HourlyHeatmap data={analytics?.hourly_heatmap} />
-        </div>
-      </div>
-
-      {}
+      {/* Risk Scores */}
       {analytics?.risk_scores && Object.keys(analytics.risk_scores).length > 0 && (
-        <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-surface-500">
-            <h3 className="text-white font-semibold">Device Risk Scores (last 24h)</h3>
-          </div>
-          <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {Object.entries(analytics.risk_scores).map(([devId, info]) => (
-              <RiskGauge key={devId} deviceId={devId} score={info.score} totalAlerts={info.total_alerts} />
-            ))}
-          </div>
-        </div>
+        <Card sx={{ mb: 3 }}>
+          <CardHeader title={<Typography variant="h6" fontWeight={600}>Device Risk Scores (last 24h)</Typography>} />
+          <CardContent sx={{ pt: 0 }}>
+            <Grid container spacing={2}>
+              {Object.entries(analytics.risk_scores).map(([devId, info]) => (
+                <Grid item xs={6} sm={3} key={devId}>
+                  <RiskGauge deviceId={devId} score={info.score} totalAlerts={info.total_alerts} />
+                </Grid>
+              ))}
+            </Grid>
+          </CardContent>
+        </Card>
       )}
 
-      {}
+      {/* Recent Clusters */}
       {analytics?.recent_clusters?.length > 0 && (
-        <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-surface-500">
-            <h3 className="text-white font-semibold">Recent Event Clusters</h3>
-          </div>
-          <div className="p-4 space-y-2">
+        <Card sx={{ mb: 3 }}>
+          <CardHeader title={<Typography variant="h6" fontWeight={600}>Recent Alert Clusters</Typography>} />
+          <CardContent sx={{ pt: 0, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
             {analytics.recent_clusters.map((c, i) => (
-              <div key={i} className={cn('flex items-center gap-4 px-4 py-3 rounded-xl border',
-                c.max_severity === 'CRITICAL' ? 'border-red-900/50 bg-red-950/20' :
-                c.max_severity === 'HIGH'     ? 'border-orange-900/50 bg-orange-950/20' : 'border-surface-500 bg-surface-700')}>
-                <div className="text-2xl font-bold text-slate-400 shrink-0 w-8 text-center">{c.event_count}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap gap-1 mb-1">
-                    {c.types.map(t => <span key={t} className="text-xs bg-surface-800 border border-surface-500 rounded px-1.5 py-0.5 text-slate-300">{t}</span>)}
-                  </div>
-                  <p className="text-slate-500 text-xs truncate">{c.devices.join(', ')} · {c.start?.split('T')[0]}</p>
-                </div>
-                <span className={cn('text-xs font-bold px-2 py-1 rounded border shrink-0', severityBg(c.max_severity))}>
-                  {c.max_severity}
-                </span>
-              </div>
+              <Chip key={i} label={`${c.type} · ${c.count} in ${c.window_minutes}min`} color={severityColor(c.severity)} size="small" variant="outlined" />
             ))}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
-      {}
-      <div className="bg-surface-600 border border-surface-500 rounded-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-surface-500">
-          <h3 className="text-white font-semibold">AI Models</h3>
-          <button onClick={loadAnalytics} className="text-slate-400 hover:text-white transition-colors">
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          </button>
-        </div>
-        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {devices?.map(device => {
-            const isTrained = models?.includes(device.device_id);
-            const state     = training[device.device_id];
-            return (
-              <div key={device.device_id} className="bg-surface-700 border border-surface-500 rounded-xl p-4 flex items-center gap-4">
-                <Cpu size={22} className={cn('shrink-0', isTrained ? 'text-secondary-300' : 'text-slate-600')} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm font-semibold truncate">{device.device_id}</p>
-                  <p className={cn('text-xs mt-0.5', isTrained ? 'text-emerald-400' : 'text-yellow-400')}>
-                    <span className="flex items-center gap-1">{isTrained ? <><CheckCircle size={12} /> Model trained</> : <><Clock size={12} /> Needs training (100 readings min)</>}</span>
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleTrain(device.device_id)}
-                  disabled={state === 'loading'}
-                  className={cn(
-                    'text-xs px-3 py-1.5 rounded-lg border font-medium transition-all shrink-0',
-                    state === 'loading' ? 'border-slate-600 text-slate-500 cursor-wait' :
-                    state === 'done'    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' :
-                    state === 'error'   ? 'border-red-500/40 bg-red-500/10 text-red-300' :
-                                         'border-primary-500/40 bg-primary-500/10 text-primary-300 hover:bg-primary-500/20',
-                  )}
-                >
-                  {state === 'loading' ? '…' : state === 'done' ? 'Done ✓' : state === 'error' ? 'Failed' : 'Train'}
-                </button>
-              </div>
-            );
-          })}
-          {(!devices || devices.length === 0) && (
-            <p className="text-slate-500 text-sm col-span-2 text-center py-6">No devices registered</p>
+      {/* AI Models */}
+      <Card>
+        <CardHeader
+          title={<Typography variant="h6" fontWeight={600}>AI Models</Typography>}
+          action={<IconButton onClick={loadAnalytics}><RefreshCw size={16} className={loading ? 'animate-spin' : ''} /></IconButton>}
+        />
+        <Divider />
+        <CardContent>
+          {(!devices || devices.length === 0) ? (
+            <Typography variant="body2" color="text.disabled" sx={{ textAlign: 'center', py: 4 }}>No devices registered</Typography>
+          ) : (
+            <Grid container spacing={2}>
+              {devices.map(device => {
+                const isTrained = models?.includes(device.device_id);
+                const state     = training[device.device_id];
+                return (
+                  <Grid item xs={12} sm={6} key={device.device_id}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, p: 2, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+                      <Cpu size={22} color={isTrained ? theme.palette.secondary.main : theme.palette.text.disabled} style={{ flexShrink: 0 }} />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography variant="body2" fontWeight={600} noWrap>{device.device_id}</Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                          {isTrained ? <CheckCircle size={11} color={theme.palette.success.main} /> : <Clock size={11} color={theme.palette.warning.main} />}
+                          <Typography variant="caption" color={isTrained ? 'success.main' : 'warning.main'}>
+                            {isTrained ? 'Model trained' : 'Needs training (100 readings min)'}
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <Button
+                        size="small" variant="outlined"
+                        color={state === 'done' ? 'success' : state === 'error' ? 'error' : 'primary'}
+                        disabled={state === 'loading'}
+                        onClick={() => handleTrain(device.device_id)}
+                        sx={{ flexShrink: 0, minWidth: 72 }}
+                      >
+                        {state === 'loading' ? '…' : state === 'done' ? 'Done ✓' : state === 'error' ? 'Failed' : 'Train'}
+                      </Button>
+                    </Box>
+                  </Grid>
+                );
+              })}
+            </Grid>
           )}
-        </div>
-      </div>
-
-    </div>
+        </CardContent>
+      </Card>
+    </Box>
   );
 }
 
 export default AIAnalysis;
+

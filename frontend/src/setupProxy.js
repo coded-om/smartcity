@@ -6,7 +6,14 @@ module.exports = function (app) {
     createProxyMiddleware({
       target: 'http://127.0.0.1:5000',
       changeOrigin: true,
-      ws: false,
+    })
+  );
+  app.use(
+    '/socket.io',
+    createProxyMiddleware({
+      target: 'http://127.0.0.1:5000',
+      changeOrigin: true,
+      ws: true,
     })
   );
 };

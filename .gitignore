@@ -46,4 +46,11 @@ frontend/.eslintcache
 backend/sensors.db
 backend/models/*.pkl
 backend/recordings/*.mp4
+backend/data/detections/
+backend/data/persons/encodings/
 *.db-journal
+
+# Reports / docs
+*.docx
+*.pdf
+AI_REPORT_CONTEXT.md

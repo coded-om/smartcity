@@ -1,4 +1,6 @@
 import os
+import socket
+import sys
 import threading
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
@@ -52,14 +54,18 @@ _DEFAULT_LOCATIONS = {
 }
 
 def _seed_device_locations() -> None:
-    conn = db.get_db()
-    for dev_id, (lat, lng) in _DEFAULT_LOCATIONS.items():
-        conn.execute(
-            "UPDATE devices SET lat=?, lng=? WHERE device_id=? AND lat IS NULL",
-            (lat, lng, dev_id),
-        )
-    conn.commit()
-    conn.close()
+    try:
+        conn = db.get_db()
+        conn.execute("PRAGMA busy_timeout = 3000")
+        for dev_id, (lat, lng) in _DEFAULT_LOCATIONS.items():
+            conn.execute(
+                "UPDATE devices SET lat=?, lng=? WHERE device_id=? AND lat IS NULL",
+                (lat, lng, dev_id),
+            )
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        print(f"[WARN] _seed_device_locations skipped: {exc}")
 
 def _auto_train_all() -> None:
     conn    = db.get_db()
@@ -85,6 +91,14 @@ def _start_face_recognition_for_cameras() -> None:
             print(f"[WARN]  FR loop error for camera {cam['id']}: {exc}")
 
 db.init_db()
+
+# Fail fast if port is already in use (avoids misleading DB-lock errors)
+_port = int(os.environ.get('PORT', 5000))
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+    if _s.connect_ex(('127.0.0.1', _port)) == 0:
+        print(f"[ERROR] Port {_port} is already in use. Run: fuser -k {_port}/tcp")
+        sys.exit(1)
+
 _seed_device_locations()
 threading.Thread(target=_auto_train_all,                     daemon=True).start()
 threading.Thread(target=_start_face_recognition_for_cameras, daemon=True).start()

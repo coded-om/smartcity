@@ -1,13 +1,14 @@
 
 import { io } from 'socket.io-client';
-import { getApiBase } from './apiBase';
 
 let _socket = null;
 
-async function _createSocket() {
-  const base = await getApiBase();
-  return io(base, {
-    transports: ['polling'],
+function _createSocket() {
+  // Connect to the default namespace '/' on the same origin as the page.
+  // In production (Flask serves the build on :5000) window.location.origin is
+  // the backend. In dev (CRA on :3000) the setupProxy forwards /socket.io.
+  return io('/', {
+    transports: ['polling', 'websocket'],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
@@ -17,7 +18,7 @@ async function _createSocket() {
 
 export async function getSocket() {
   if (!_socket) {
-    _socket = await _createSocket();
+    _socket = _createSocket();
 
     _socket.on('connect', () =>
       console.log('[Socket] connected', _socket.id)

@@ -1,49 +1,59 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
-import { SonnerToaster } from './components/ui/sonner-toaster';
+import React, { useState, useEffect, useMemo } from 'react';
+import { ThemeProvider } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import Box from '@mui/material/Box';
+import CircularProgress from '@mui/material/CircularProgress';
+import Typography from '@mui/material/Typography';
+import { Toaster } from 'sonner';
 
-import Sidebar       from './components/Sidebar';
-import Header        from './components/Header';
-import Overview      from './components/Overview';
-import LiveMonitor   from './components/LiveMonitor';
-import Cameras       from './components/Cameras';
-import ForensicLogs  from './components/ForensicLogs';
-import AIAnalysis    from './components/AIAnalysis';
-import SecurityMap   from './components/SecurityMap';
-import ReportCenter  from './components/ReportCenter';
-import Settings      from './components/Settings';
-import ThreatMonitor from './components/ThreatMonitor';
-import { apiFetch } from './apiBase';
-import './App.css';
+import createAppTheme from './theme';
+import Sidebar        from './components/Sidebar';
+import Header         from './components/Header';
+import Overview       from './components/Overview';
+import LiveMonitor    from './components/LiveMonitor';
+import Cameras        from './components/Cameras';
+import ForensicLogs   from './components/ForensicLogs';
+import AIAnalysis     from './components/AIAnalysis';
+import SecurityMap    from './components/SecurityMap';
+import ReportCenter   from './components/ReportCenter';
+import Settings       from './components/Settings';
+import ThreatMonitor  from './components/ThreatMonitor';
+import { apiFetch }   from './apiBase';
 
-const POLL_MS = 8000;
+const POLL_MS   = 8000;
+const APP_BAR_H = 64;  // px — matches MUI Toolbar default height
+const RAIL_W    = 80;  // px — Navigation Rail width on desktop
 
 function fetchWithSignal(path, signal) {
   return apiFetch(path, { signal });
 }
 
 function App() {
-  const [activeView,    setActiveView]    = useState('overview');
-  const [sidebarOpen,   setSidebarOpen]   = useState(false);
+  const [activeView,  setActiveView]  = useState('overview');
+  const [mobileOpen,  setMobileOpen]  = useState(false);
   const [stats,   setStats]   = useState(null);
   const [devices, setDevices] = useState([]);
   const [alerts,  setAlerts]  = useState([]);
   const [models,  setModels]  = useState([]);
   const [loading, setLoading] = useState(true);
-  const [theme,   setTheme]   = useState(() => localStorage.getItem('theme') || 'dark');
+  const [themeMode, setThemeMode] = useState(
+    () => localStorage.getItem('theme') || 'light'
+  );
 
+  // Build MUI theme — re-memoized when mode toggles
+  const muiTheme = useMemo(() => createAppTheme(themeMode), [themeMode]);
+
+  // Keep html.dark class in sync (for any residual Tailwind dark: classes)
   useEffect(() => {
     const html = document.documentElement;
-    if (theme === 'dark') {
-      html.classList.add('dark');
-    } else {
-      html.classList.remove('dark');
-    }
-    localStorage.setItem('theme', theme);
-  }, [theme]);
+    if (themeMode === 'dark') html.classList.add('dark');
+    else html.classList.remove('dark');
+    localStorage.setItem('theme', themeMode);
+  }, [themeMode]);
 
-  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+  const toggleTheme = () => setThemeMode(m => m === 'dark' ? 'light' : 'dark');
 
+  // ── Data polling ──────────────────────────────────────────
   useEffect(() => {
     let controller = new AbortController();
 
@@ -51,7 +61,6 @@ function App() {
       controller.abort();
       controller = new AbortController();
       const { signal } = controller;
-
       try {
         const [sRes, dRes, aRes, mRes] = await Promise.all([
           fetchWithSignal('/stats',           signal),
@@ -75,71 +84,91 @@ function App() {
 
     fetchAll();
     const interval = setInterval(fetchAll, POLL_MS);
-    return () => {
-      clearInterval(interval);
-      controller.abort();
-    };
+    return () => { clearInterval(interval); controller.abort(); };
   }, []);
 
   const handleNavChange = (view) => {
     setActiveView(view);
-    setSidebarOpen(false);
+    setMobileOpen(false);
   };
 
+  // ── View renderer ─────────────────────────────────────────
   const renderView = () => {
     if (loading) {
       return (
-        <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-400">
-          <Loader2 className="animate-spin text-primary-400" size={48} />
-          <p className="text-lg font-medium">Loading system data…</p>
-        </div>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 2 }}>
+          <CircularProgress size={48} />
+          <Typography variant="body1" color="text.secondary">Loading system data…</Typography>
+        </Box>
       );
     }
-
     switch (activeView) {
-      case 'overview':      return <Overview stats={stats} devices={devices} alerts={alerts} models={models} />;
-      case 'live-monitor':  return <LiveMonitor devices={devices} />;
+      case 'overview':      return <Overview      stats={stats} devices={devices} alerts={alerts} models={models} />;
+      case 'live-monitor':  return <LiveMonitor   devices={devices} />;
       case 'cameras':       return <Cameras />;
-      case 'forensic-logs': return <ForensicLogs alerts={alerts} />;
-      case 'ai-analysis':   return <AIAnalysis devices={devices} models={models} alerts={alerts} />;
-      case 'security-map':  return <SecurityMap devices={devices} alerts={alerts} />;
-      case 'report-center': return <ReportCenter devices={devices} alerts={alerts} stats={stats} models={models} />;
+      case 'forensic-logs': return <ForensicLogs  alerts={alerts} />;
+      case 'ai-analysis':   return <AIAnalysis    devices={devices} models={models} alerts={alerts} />;
+      case 'security-map':  return <SecurityMap   devices={devices} alerts={alerts} />;
+      case 'report-center': return <ReportCenter  devices={devices} alerts={alerts} stats={stats} models={models} />;
       case 'settings':      return <Settings />;
-      default:              return <Overview stats={stats} devices={devices} alerts={alerts} models={models} />;
+      default:              return <Overview      stats={stats} devices={devices} alerts={alerts} models={models} />;
     }
   };
 
   return (
-    <div className="app">
-      <SonnerToaster />
-      <Sidebar
-        activeView={activeView}
-        setActiveView={handleNavChange}
-        stats={stats}
-        devices={devices}
-        isOpen={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-      />
+    <ThemeProvider theme={muiTheme}>
+      <CssBaseline />
+      <Toaster richColors position="top-right" />
 
-      <div className="main-content">
+      <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden', bgcolor: 'background.default' }}>
+        {/* ── Top App Bar ─────────────────────────────────── */}
         <Header
           activeView={activeView}
           stats={stats}
           alerts={alerts}
-          onMenuClick={() => setSidebarOpen(prev => !prev)}
-          theme={theme}
+          onMenuClick={() => setMobileOpen(p => !p)}
+          themeMode={themeMode}
           toggleTheme={toggleTheme}
+          appBarHeight={APP_BAR_H}
         />
-        <div className="content-area">
-          <ThreatMonitor
-            className="mb-4"
-            onViewCamera={(camId) => setActiveView('cameras')}
-          />
-          {renderView()}
-        </div>
-      </div>
-    </div>
+
+        {/* ── Navigation Sidebar (Rail + Drawer) ──────────── */}
+        <Sidebar
+          activeView={activeView}
+          setActiveView={handleNavChange}
+          stats={stats}
+          devices={devices}
+          mobileOpen={mobileOpen}
+          onClose={() => setMobileOpen(false)}
+          railWidth={RAIL_W}
+          appBarHeight={APP_BAR_H}
+        />
+
+        {/* ── Main Content ────────────────────────────────── */}
+        <Box
+          component="main"
+          sx={{
+            flexGrow: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            mt: `${APP_BAR_H}px`,
+            ml: { xs: 0, md: `${RAIL_W}px` },
+            width: { xs: '100%', md: `calc(100% - ${RAIL_W}px)` },
+          }}
+        >
+          {/* Threat monitor strip */}
+          <ThreatMonitor onViewCamera={() => handleNavChange('cameras')} />
+
+          {/* Scrollable view area */}
+          <Box sx={{ flexGrow: 1, overflow: 'auto', p: { xs: 2, sm: 3 } }}>
+            {renderView()}
+          </Box>
+        </Box>
+      </Box>
+    </ThemeProvider>
   );
 }
 
 export default App;
+

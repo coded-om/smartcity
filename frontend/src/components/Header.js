@@ -1,11 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, Search, Wifi, WifiOff, Menu, X, Sun, Moon } from 'lucide-react';
-import { cn, alertTypeIcon, severityBg } from '../lib/utils';
-import { Input } from './ui/input';
-import { Badge } from './ui/badge';
-import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
-import { ScrollArea } from './ui/scroll-area';
-import { Separator } from './ui/separator';
+import AppBar from '@mui/material/AppBar';
+import Toolbar from '@mui/material/Toolbar';
+import IconButton from '@mui/material/IconButton';
+import Typography from '@mui/material/Typography';
+import Badge from '@mui/material/Badge';
+import Box from '@mui/material/Box';
+import InputBase from '@mui/material/InputBase';
+import Popover from '@mui/material/Popover';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText';
+import Chip from '@mui/material/Chip';
+import Tooltip from '@mui/material/Tooltip';
+import Divider from '@mui/material/Divider';
+import { alpha } from '@mui/material/styles';
+import { useTheme } from '@mui/material/styles';
+import { Bell, Search, Wifi, WifiOff, Menu, Sun, Moon, Flame, Wind, Zap, AlertTriangle, Activity } from 'lucide-react';
+import { formatRelative } from '../lib/utils';
 
 const TITLES = {
   'overview':      'Overview',
@@ -18,147 +29,220 @@ const TITLES = {
   'settings':      'Settings',
 };
 
-function Header({ activeView, stats, alerts, onMenuClick, theme, toggleTheme }) {
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [tickerIdx,  setTickerIdx]  = useState(0);
+const SEVERITY_COLOR = { CRITICAL: 'error', HIGH: 'warning', MEDIUM: 'info', LOW: 'default' };
+
+function alertIcon(type) {
+  const sz = 14;
+  switch (type) {
+    case 'FIRE':       return <Flame      size={sz} color="#ef4444" />;
+    case 'GAS_LEAK':   return <Wind       size={sz} color="#f59e0b" />;
+    case 'EXPLOSION':  return <Zap        size={sz} color="#f97316" />;
+    case 'INTRUDER':   return <AlertTriangle size={sz} color="#3b82f6" />;
+    default:           return <Activity   size={sz} color="#6366f1" />;
+  }
+}
+
+function Header({ activeView, stats, alerts, onMenuClick, themeMode, toggleTheme, appBarHeight }) {
+  const theme          = useTheme();
+  const [searchOpen,   setSearchOpen]  = useState(false);
+  const [anchorEl,     setAnchorEl]    = useState(null);
+  const [tickerIdx,    setTickerIdx]   = useState(0);
 
   const openAlerts    = stats?.open_alerts    || 0;
   const totalReadings = stats?.total_readings || 0;
   const isConnected   = (stats?.devices_online || 0) > 0;
+  const recentAlerts  = (alerts || []).filter(a => !a.resolved).slice(0, 12);
+  const tickerAlert   = recentAlerts[tickerIdx];
 
-  const recentAlerts = (alerts || []).filter(a => !a.resolved).slice(0, 10);
   useEffect(() => {
     if (recentAlerts.length < 2) return;
     const t = setInterval(() => setTickerIdx(i => (i + 1) % recentAlerts.length), 4000);
     return () => clearInterval(t);
   }, [recentAlerts.length]);
 
-  const tickerAlert = recentAlerts[tickerIdx];
+  const searchBg = alpha(theme.palette.text.primary, 0.06);
 
   return (
-    <header className="shrink-0 bg-surface-900 border-b border-surface-700">
-      <div className="flex items-center justify-between px-4 sm:px-6 py-3 gap-3">
+    <AppBar
+      position="fixed"
+      sx={{
+        zIndex: t => t.zIndex.drawer + 1,
+        height: appBarHeight,
+        bgcolor: 'background.paper',
+      }}
+    >
+      <Toolbar sx={{ height: appBarHeight, minHeight: `${appBarHeight}px !important`, px: { xs: 1.5, sm: 2 }, gap: 1 }}>
 
-        {}
-        <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={onMenuClick}
-            className="lg:hidden p-2 rounded-xl bg-surface-700 border border-surface-600 text-slate-400 hover:text-white transition-colors shrink-0"
+        {/* Menu button (mobile only) */}
+        <IconButton onClick={onMenuClick} size="small" sx={{ display: { md: 'none' } }}>
+          <Menu size={20} />
+        </IconButton>
+
+        {/* Logo + Page title */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0, flexShrink: 0 }}>
+          <Box
+            sx={{
+              display: { xs: 'none', md: 'flex' },
+              width: 32, height: 32, borderRadius: '10px',
+              bgcolor: 'primary.main', alignItems: 'center', justifyContent: 'center',
+            }}
           >
-            <Menu size={18} />
-          </button>
-          <div className="min-w-0">
-            <h2 className="text-white font-bold text-lg truncate">
+            <Typography sx={{ color: '#fff', fontWeight: 700, fontSize: '0.8rem' }}>SC</Typography>
+          </Box>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="h6" noWrap fontWeight={600} fontSize="0.9375rem">
               {TITLES[activeView] || 'Overview'}
-            </h2>
-            <div className="flex items-center gap-1.5 mt-0.5">
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: '-2px' }}>
               {isConnected
-                ? <Wifi size={11} className="text-emerald-400 shrink-0" />
-                : <WifiOff size={11} className="text-accent-400 shrink-0" />}
-              <span className="text-slate-500 text-xs">
+                ? <Wifi size={10} color={theme.palette.success.main} />
+                : <WifiOff size={10} color={theme.palette.error.main} />}
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
                 {isConnected ? 'Live' : 'Offline'} · {totalReadings.toLocaleString()} readings
-              </span>
-            </div>
-          </div>
-        </div>
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
 
-        {}
+        {/* Alert ticker (center, desktop only) */}
         {tickerAlert && (
-          <div className="hidden md:flex flex-1 mx-4 items-center gap-2 bg-surface-700 border border-surface-600 rounded-lg px-3 py-1.5 overflow-hidden max-w-sm">
-            {alertTypeIcon(tickerAlert.alert_type)}
-            <span className="text-xs text-slate-300 truncate flex-1">
-              {tickerAlert.device_id} – {tickerAlert.alert_type}
-            </span>
-            <Badge className={cn('text-[10px] shrink-0', severityBg(tickerAlert.severity))}>
-              {tickerAlert.severity}
-            </Badge>
-          </div>
+          <Box
+            sx={{
+              display: { xs: 'none', lg: 'flex' },
+              flex: 1, mx: 2, alignItems: 'center', gap: 1,
+              bgcolor: searchBg, borderRadius: 2, px: 1.5, py: 0.75,
+              maxWidth: 400,
+            }}
+          >
+            {alertIcon(tickerAlert.alert_type)}
+            <Typography variant="caption" noWrap sx={{ flex: 1, fontSize: '0.75rem' }}>
+              {tickerAlert.device_id} — {tickerAlert.alert_type}
+            </Typography>
+            <Chip
+              label={tickerAlert.severity}
+              color={SEVERITY_COLOR[tickerAlert.severity] || 'default'}
+              size="small"
+              sx={{ height: 18, fontSize: '0.6rem', fontWeight: 600 }}
+            />
+          </Box>
         )}
 
-        {}
-        <div className="flex items-center gap-2 shrink-0">
-          {}
-          <div className="relative hidden md:block">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-            <Input
-              type="text"
-              placeholder="Search events…"
-              className="pl-9 w-52 h-9 text-sm bg-surface-700 border-surface-600"
-            />
-          </div>
+        <Box sx={{ flexGrow: 1 }} />
 
-          {}
-          <button
-            onClick={() => setSearchOpen(v => !v)}
-            className="md:hidden p-2 rounded-xl bg-surface-700 border border-surface-600 text-slate-400 hover:text-white transition-colors"
+        {/* Search bar (desktop) */}
+        {!searchOpen ? (
+          <Box
+            sx={{
+              display: { xs: 'none', md: 'flex' },
+              alignItems: 'center', gap: 1,
+              bgcolor: searchBg, borderRadius: 2,
+              px: 1.5, py: 0.5, cursor: 'text',
+            }}
+            onClick={() => setSearchOpen(true)}
           >
-            {searchOpen ? <X size={16} /> : <Search size={16} />}
-          </button>
-
-          {}
-          <button
-            onClick={toggleTheme}
-            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            className="p-2 rounded-xl bg-surface-700 border border-surface-600 text-slate-400 hover:text-white transition-colors"
+            <Search size={14} color={theme.palette.text.secondary} />
+            <Typography variant="caption" color="text.secondary">Search events…</Typography>
+          </Box>
+        ) : (
+          <Box
+            sx={{
+              display: 'flex', alignItems: 'center', gap: 1,
+              bgcolor: searchBg, borderRadius: 2, px: 1.5, py: 0.25,
+              width: { xs: 160, sm: 220 },
+            }}
           >
-            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
-
-          {}
-          <Popover>
-            <PopoverTrigger asChild>
-              <button className="relative p-2 rounded-xl bg-surface-700 border border-surface-600 text-slate-400 hover:text-white transition-colors">
-                <Bell size={18} />
-                {openAlerts > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-accent-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
-                    {openAlerts > 9 ? '9+' : openAlerts}
-                  </span>
-                )}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-80 p-0">
-              <div className="px-4 py-3 flex items-center justify-between">
-                <p className="text-sm font-semibold text-white">Notifications</p>
-                <Badge variant="secondary" className="text-xs">{openAlerts} open</Badge>
-              </div>
-              <Separator />
-              <ScrollArea className="max-h-64">
-                {recentAlerts.length === 0 ? (
-                  <p className="text-sm text-slate-500 text-center py-6">No open alerts</p>
-                ) : recentAlerts.map(a => (
-                  <div key={a.id} className="flex items-start gap-3 px-4 py-2.5 hover:bg-surface-600 transition-colors">
-                    <div className="mt-0.5 shrink-0">{alertTypeIcon(a.alert_type)}</div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-slate-200 truncate">{a.device_id} – {a.alert_type}</p>
-                      <p className="text-[10px] text-slate-500 mt-0.5">{a.timestamp?.split('T')[0] || a.timestamp}</p>
-                    </div>
-                    <Badge className={cn('text-[10px] shrink-0 mt-0.5', severityBg(a.severity))}>
-                      {a.severity}
-                    </Badge>
-                  </div>
-                ))}
-              </ScrollArea>
-            </PopoverContent>
-          </Popover>
-        </div>
-      </div>
-
-      {}
-      {searchOpen && (
-        <div className="md:hidden px-4 pb-3">
-          <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-            <Input
+            <Search size={14} color={theme.palette.text.secondary} />
+            <InputBase
               autoFocus
-              type="text"
-              placeholder="Search sensor / event…"
-              className="pl-9 w-full h-10 text-sm bg-surface-700 border-surface-600"
+              placeholder="Search events…"
+              onBlur={() => setSearchOpen(false)}
+              sx={{ fontSize: '0.8125rem', flex: 1, height: 28 }}
             />
-          </div>
-        </div>
+          </Box>
+        )}
+
+        {/* Search icon (mobile) */}
+        <IconButton
+          size="small"
+          onClick={() => setSearchOpen(s => !s)}
+          sx={{ display: { xs: 'flex', md: 'none' } }}
+        >
+          <Search size={18} />
+        </IconButton>
+
+        {/* Theme toggle */}
+        <Tooltip title={themeMode === 'dark' ? 'Light mode' : 'Dark mode'}>
+          <IconButton size="small" onClick={toggleTheme}>
+            {themeMode === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+          </IconButton>
+        </Tooltip>
+
+        {/* Notifications */}
+        <Tooltip title="Notifications">
+          <IconButton size="small" onClick={e => setAnchorEl(e.currentTarget)}>
+            <Badge badgeContent={openAlerts > 0 ? (openAlerts > 99 ? '99+' : openAlerts) : null} color="error">
+              <Bell size={20} />
+            </Badge>
+          </IconButton>
+        </Tooltip>
+
+        {/* Notifications popover */}
+        <Popover
+          open={Boolean(anchorEl)}
+          anchorEl={anchorEl}
+          onClose={() => setAnchorEl(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          PaperProps={{ sx: { width: 320, mt: 1, borderRadius: 3 } }}
+        >
+          <Box sx={{ px: 2, py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Typography variant="subtitle2" fontWeight={600}>Notifications</Typography>
+            <Chip label={`${openAlerts} open`} size="small" color="primary" variant="outlined" />
+          </Box>
+          <Divider />
+          <Box sx={{ maxHeight: 280, overflow: 'auto' }}>
+            {recentAlerts.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
+                No open alerts
+              </Typography>
+            ) : (
+              <List dense disablePadding>
+                {recentAlerts.map(a => (
+                  <ListItem key={a.id} divider sx={{ alignItems: 'flex-start', gap: 1.5, py: 1.25 }}>
+                    <Box sx={{ mt: 0.25, flexShrink: 0 }}>{alertIcon(a.alert_type)}</Box>
+                    <ListItemText
+                      primary={`${a.device_id} — ${a.alert_type}`}
+                      secondary={a.timestamp?.split('T')[0] || a.timestamp}
+                      primaryTypographyProps={{ variant: 'caption', fontWeight: 500 }}
+                      secondaryTypographyProps={{ variant: 'caption', sx: { fontSize: '0.65rem' } }}
+                    />
+                    <Chip
+                      label={a.severity}
+                      color={SEVERITY_COLOR[a.severity] || 'default'}
+                      size="small"
+                      sx={{ height: 18, fontSize: '0.6rem', fontWeight: 600, mt: 0.25 }}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            )}
+          </Box>
+        </Popover>
+
+      </Toolbar>
+
+      {/* Mobile search expansion */}
+      {searchOpen && (
+        <Box sx={{ px: 2, pb: 1.5, display: { md: 'none' } }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, bgcolor: searchBg, borderRadius: 2, px: 1.5 }}>
+            <Search size={14} color={theme.palette.text.secondary} />
+            <InputBase autoFocus placeholder="Search sensor / event…" onBlur={() => setSearchOpen(false)} sx={{ fontSize: '0.8125rem', flex: 1, height: 36 }} />
+          </Box>
+        </Box>
       )}
-    </header>
+    </AppBar>
   );
 }
 
 export default Header;
+

@@ -1,39 +1,40 @@
 import React, { useState, useEffect } from 'react';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
+import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Switch from '@mui/material/Switch';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Alert from '@mui/material/Alert';
+import Divider from '@mui/material/Divider';
+import CircularProgress from '@mui/material/CircularProgress';
 import { X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { apiFetch } from '../apiBase';
-import { cn } from '../lib/utils';
 
 export default function CameraModal({ camera, onClose, onSave }) {
   const isEdit = Boolean(camera);
 
   const [formData, setFormData] = useState({
-    name: '',
-    rtsp_url: '',
-    type: 'RTSP',
-    device_id: '',
-    location: '',
-    lat: '',
-    lng: '',
-    enabled: true,
-    face_recognition_enabled: false,
-    recording_enabled: true,
+    name: '', rtsp_url: '', type: 'RTSP', device_id: '', location: '',
+    lat: '', lng: '', enabled: true, face_recognition_enabled: false, recording_enabled: true,
   });
-
-  const [testing, setTesting] = useState(false);
+  const [testing,    setTesting]    = useState(false);
   const [testResult, setTestResult] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [errors, setErrors] = useState({});
+  const [saving,     setSaving]     = useState(false);
+  const [errors,     setErrors]     = useState({});
 
   useEffect(() => {
     if (camera) {
       setFormData({
-        name: camera.name || '',
-        rtsp_url: camera.rtsp_url || '',
-        type: camera.type || 'RTSP',
-        device_id: camera.device_id || '',
-        location: camera.location || '',
-        lat: camera.lat || '',
-        lng: camera.lng || '',
+        name: camera.name || '', rtsp_url: camera.rtsp_url || '', type: camera.type || 'RTSP',
+        device_id: camera.device_id || '', location: camera.location || '',
+        lat: camera.lat || '', lng: camera.lng || '',
         enabled: camera.enabled !== false,
         face_recognition_enabled: camera.face_recognition_enabled || false,
         recording_enabled: camera.recording_enabled !== false,
@@ -43,335 +44,120 @@ export default function CameraModal({ camera, onClose, onSave }) {
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: null }));
-    }
-    if (field === 'rtsp_url' || field === 'type') {
-      setTestResult(null);
-    }
+    if (errors[field]) setErrors(prev => ({ ...prev, [field]: null }));
+    if (field === 'rtsp_url' || field === 'type') setTestResult(null);
   };
 
   const validateForm = () => {
     const newErrors = {};
-
-    if (!formData.name.trim()) {
-      newErrors.name = 'Camera name is required';
-    }
-
-    if (!formData.rtsp_url.trim()) {
-      newErrors.rtsp_url = 'RTSP URL or IP address is required';
-    } else if (formData.type === 'RTSP' && !formData.rtsp_url.startsWith('rtsp://')) {
-      newErrors.rtsp_url = 'RTSP URL must start with rtsp://';
-    }
-
-    if (formData.lat && isNaN(parseFloat(formData.lat))) {
-      newErrors.lat = 'Invalid latitude';
-    }
-
-    if (formData.lng && isNaN(parseFloat(formData.lng))) {
-      newErrors.lng = 'Invalid longitude';
-    }
-
+    if (!formData.name.trim()) newErrors.name = 'Camera name is required';
+    if (!formData.rtsp_url.trim()) newErrors.rtsp_url = 'RTSP URL or IP address is required';
+    else if (formData.type === 'RTSP' && !formData.rtsp_url.startsWith('rtsp://')) newErrors.rtsp_url = 'RTSP URL must start with rtsp://';
+    if (formData.lat && isNaN(parseFloat(formData.lat))) newErrors.lat = 'Invalid latitude';
+    if (formData.lng && isNaN(parseFloat(formData.lng))) newErrors.lng = 'Invalid longitude';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleTest = async () => {
-    if (!formData.rtsp_url.trim()) {
-      setErrors({ rtsp_url: 'Enter URL first' });
-      return;
-    }
-
-    setTesting(true);
-    setTestResult(null);
-
+    if (!formData.rtsp_url.trim()) { setErrors({ rtsp_url: 'Enter URL first' }); return; }
+    setTesting(true); setTestResult(null);
     try {
       if (isEdit) {
-        const res = await apiFetch(`/cameras/${camera.id}/test`);
+        const res  = await apiFetch(`/cameras/${camera.id}/test`);
         const data = await res.json();
-        setTestResult({
-          success: data.success,
-          message: data.success ? 'Connection successful!' : (data.error || 'Connection failed'),
-        });
+        setTestResult({ success: data.success, message: data.success ? 'Connection successful!' : (data.error || 'Connection failed') });
       } else {
-        setTestResult({
-          success: true,
-          message: 'URL format valid. Test connection after saving.',
-        });
+        setTestResult({ success: true, message: 'URL format valid. Test connection after saving.' });
       }
     } catch (err) {
-      setTestResult({
-        success: false,
-        message: err.message || 'Connection test failed',
-      });
-    } finally {
-      setTesting(false);
-    }
+      setTestResult({ success: false, message: err.message || 'Connection test failed' });
+    } finally { setTesting(false); }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     if (!validateForm()) return;
-
     setSaving(true);
-
     try {
-      const payload = {
-        ...formData,
-        lat: formData.lat ? parseFloat(formData.lat) : null,
-        lng: formData.lng ? parseFloat(formData.lng) : null,
-        device_id: formData.device_id || null,
-      };
-
-      const url = isEdit ? `/cameras/${camera.id}` : '/cameras';
+      const payload = { ...formData, lat: formData.lat ? parseFloat(formData.lat) : null, lng: formData.lng ? parseFloat(formData.lng) : null, device_id: formData.device_id || null };
+      const url    = isEdit ? `/cameras/${camera.id}` : '/cameras';
       const method = isEdit ? 'PATCH' : 'POST';
-
-      const res = await apiFetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json();
-
-      if (data.success) {
-        onSave();
-      } else {
-        alert(`Failed to save camera: ${data.error || 'Unknown error'}`);
-      }
-    } catch (err) {
-      console.error('Save camera error:', err);
-      alert('Failed to save camera');
-    } finally {
-      setSaving(false);
-    }
+      const res    = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data   = await res.json();
+      if (data.success) { onSave(); }
+      else alert(`Failed to save camera: ${data.error || 'Unknown error'}`);
+    } catch (err) { console.error('Save camera error:', err); alert('Failed to save camera'); }
+    finally { setSaving(false); }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-surface-800 rounded-xl border border-surface-600 w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
-        {}
-        <div className="flex items-center justify-between p-6 border-b border-surface-600">
-          <h2 className="text-xl font-bold text-white">
-            {isEdit ? 'Edit Camera' : 'Add New Camera'}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-surface-700 text-slate-400 hover:text-white transition-colors"
-          >
-            <X size={18} />
-          </button>
-        </div>
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth PaperProps={{ component: 'form', onSubmit: handleSubmit }}>
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {isEdit ? 'Edit Camera' : 'Add New Camera'}
+        <IconButton size="small" onClick={onClose}><X size={18} /></IconButton>
+      </DialogTitle>
 
-        {}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
-          {}
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              Camera Name <span className="text-accent-400">*</span>
-            </label>
-            <input
-              type="text"
-              value={formData.name}
-              onChange={(e) => handleChange('name', e.target.value)}
-              placeholder="e.g., Main Entrance Camera"
-              className={cn(
-                'w-full px-4 py-2 rounded-lg bg-surface-900 border text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500',
-                errors.name ? 'border-accent-500' : 'border-surface-600'
-              )}
-            />
-            {errors.name && <p className="text-accent-400 text-xs mt-1">{errors.name}</p>}
-          </div>
+      <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+        <TextField
+          label="Camera Name" required size="small" fullWidth
+          value={formData.name} onChange={e => handleChange('name', e.target.value)}
+          error={!!errors.name} helperText={errors.name}
+          placeholder="e.g., Main Entrance Camera"
+        />
 
-          {}
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              Camera Type
-            </label>
-            <select
-              value={formData.type}
-              onChange={(e) => handleChange('type', e.target.value)}
-              className="w-full px-4 py-2 rounded-lg bg-surface-900 border border-surface-600 text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              <option value="RTSP">RTSP Camera</option>
-              <option value="ESP32-CAM">ESP32-CAM</option>
-              <option value="USB">USB Camera</option>
-            </select>
-          </div>
+        <TextField
+          select label="Camera Type" size="small" fullWidth
+          value={formData.type} onChange={e => handleChange('type', e.target.value)}
+        >
+          <MenuItem value="RTSP">RTSP Camera</MenuItem>
+          <MenuItem value="ESP32-CAM">ESP32-CAM</MenuItem>
+          <MenuItem value="USB">USB Camera</MenuItem>
+        </TextField>
 
-          {}
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              {formData.type === 'RTSP' ? 'RTSP URL' : 'IP Address'} <span className="text-accent-400">*</span>
-            </label>
-            <input
-              type="text"
-              value={formData.rtsp_url}
-              onChange={(e) => handleChange('rtsp_url', e.target.value)}
-              placeholder={
-                formData.type === 'RTSP'
-                  ? 'rtsp://username:password@192.168.1.100:554/stream'
-                  : '192.168.1.100'
-              }
-              className={cn(
-                'w-full px-4 py-2 rounded-lg bg-surface-900 border text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500',
-                errors.rtsp_url ? 'border-accent-500' : 'border-surface-600'
-              )}
-            />
-            {errors.rtsp_url && <p className="text-accent-400 text-xs mt-1">{errors.rtsp_url}</p>}
-            
-            {}
-            <div className="flex items-center gap-3 mt-2">
-              <button
-                type="button"
-                onClick={handleTest}
-                disabled={testing || !formData.rtsp_url.trim()}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-700 hover:bg-surface-600 disabled:bg-surface-900 text-slate-300 disabled:text-slate-600 text-sm font-medium transition-colors"
-              >
-                {testing && <Loader2 size={14} className="animate-spin" />}
-                Test Connection
-              </button>
+        <Box>
+          <TextField
+            label={formData.type === 'RTSP' ? 'RTSP URL' : 'IP Address'} required size="small" fullWidth
+            value={formData.rtsp_url} onChange={e => handleChange('rtsp_url', e.target.value)}
+            error={!!errors.rtsp_url} helperText={errors.rtsp_url}
+            placeholder={formData.type === 'RTSP' ? 'rtsp://username:password@192.168.1.100:554/stream' : '192.168.1.100'}
+          />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
+            <Button size="small" variant="outlined" onClick={handleTest} disabled={testing || !formData.rtsp_url.trim()} startIcon={testing ? <Loader2 size={13} className="animate-spin" /> : null}>
+              Test Connection
+            </Button>
+            {testResult && (
+              <Typography variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }} color={testResult.success ? 'success.main' : 'error.main'}>
+                {testResult.success ? <CheckCircle size={13} /> : <AlertCircle size={13} />} {testResult.message}
+              </Typography>
+            )}
+          </Box>
+        </Box>
 
-              {testResult && (
-                <div className={cn(
-                  'flex items-center gap-2 text-sm',
-                  testResult.success ? 'text-emerald-400' : 'text-accent-400'
-                )}>
-                  {testResult.success ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
-                  {testResult.message}
-                </div>
-              )}
-            </div>
-          </div>
+        <TextField label="Associated Device (Optional)" size="small" fullWidth value={formData.device_id} onChange={e => handleChange('device_id', e.target.value)} placeholder="e.g., ESP32_Zone_A" helperText="Link camera to an ESP32 zone for correlation" />
+        <TextField label="Location Description" size="small" fullWidth value={formData.location} onChange={e => handleChange('location', e.target.value)} placeholder="e.g., Building A - Main Entrance" />
 
-          {}
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              Associated Device (Optional)
-            </label>
-            <input
-              type="text"
-              value={formData.device_id}
-              onChange={(e) => handleChange('device_id', e.target.value)}
-              placeholder="e.g., ESP32_Zone_A"
-              className="w-full px-4 py-2 rounded-lg bg-surface-900 border border-surface-600 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            />
-            <p className="text-slate-500 text-xs mt-1">Link camera to an ESP32 zone for correlation</p>
-          </div>
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+          <TextField label="Latitude" size="small" value={formData.lat} onChange={e => handleChange('lat', e.target.value)} error={!!errors.lat} helperText={errors.lat} placeholder="24.7136" />
+          <TextField label="Longitude" size="small" value={formData.lng} onChange={e => handleChange('lng', e.target.value)} error={!!errors.lng} helperText={errors.lng} placeholder="46.6753" />
+        </Box>
 
-          {}
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              Location Description
-            </label>
-            <input
-              type="text"
-              value={formData.location}
-              onChange={(e) => handleChange('location', e.target.value)}
-              placeholder="e.g., Building A - Main Entrance"
-              className="w-full px-4 py-2 rounded-lg bg-surface-900 border border-surface-600 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            />
-          </div>
+        <Divider />
 
-          {}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Latitude
-              </label>
-              <input
-                type="text"
-                value={formData.lat}
-                onChange={(e) => handleChange('lat', e.target.value)}
-                placeholder="24.7136"
-                className={cn(
-                  'w-full px-4 py-2 rounded-lg bg-surface-900 border text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500',
-                  errors.lat ? 'border-accent-500' : 'border-surface-600'
-                )}
-              />
-              {errors.lat && <p className="text-accent-400 text-xs mt-1">{errors.lat}</p>}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Longitude
-              </label>
-              <input
-                type="text"
-                value={formData.lng}
-                onChange={(e) => handleChange('lng', e.target.value)}
-                placeholder="46.6753"
-                className={cn(
-                  'w-full px-4 py-2 rounded-lg bg-surface-900 border text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500',
-                  errors.lng ? 'border-accent-500' : 'border-surface-600'
-                )}
-              />
-              {errors.lng && <p className="text-accent-400 text-xs mt-1">{errors.lng}</p>}
-            </div>
-          </div>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <FormControlLabel control={<Switch checked={formData.enabled} onChange={e => handleChange('enabled', e.target.checked)} />} label={<Box><Typography variant="body2" fontWeight={500}>Enable Camera</Typography><Typography variant="caption" color="text.secondary">Activate monitoring for this camera</Typography></Box>} />
+          <FormControlLabel control={<Switch checked={formData.face_recognition_enabled} onChange={e => handleChange('face_recognition_enabled', e.target.checked)} />} label={<Box><Typography variant="body2" fontWeight={500}>Local Face Analysis</Typography><Typography variant="caption" color="text.secondary">Enable OpenCV face detection with overlays</Typography></Box>} />
+          <FormControlLabel control={<Switch checked={formData.recording_enabled} onChange={e => handleChange('recording_enabled', e.target.checked)} />} label={<Box><Typography variant="body2" fontWeight={500}>Recording</Typography><Typography variant="caption" color="text.secondary">Save video clips on alert detection</Typography></Box>} />
+        </Box>
+      </DialogContent>
 
-          {}
-          <div className="space-y-3 pt-4 border-t border-surface-600">
-            <label className="flex items-center justify-between p-3 rounded-lg bg-surface-900 border border-surface-600 cursor-pointer hover:border-primary-700 transition-colors">
-              <div>
-                <p className="text-sm font-medium text-white">Enable Camera</p>
-                <p className="text-xs text-slate-500">Activate monitoring for this camera</p>
-              </div>
-              <input
-                type="checkbox"
-                checked={formData.enabled}
-                onChange={(e) => handleChange('enabled', e.target.checked)}
-                className="w-5 h-5 rounded bg-surface-800 border-surface-600 text-primary-500 focus:ring-2 focus:ring-primary-500"
-              />
-            </label>
-
-            <label className="flex items-center justify-between p-3 rounded-lg bg-surface-900 border border-surface-600 cursor-pointer hover:border-primary-700 transition-colors">
-              <div>
-                <p className="text-sm font-medium text-white">Local Face Analysis</p>
-                <p className="text-xs text-slate-500">Enable OpenCV face detection with green-box overlays</p>
-              </div>
-              <input
-                type="checkbox"
-                checked={formData.face_recognition_enabled}
-                onChange={(e) => handleChange('face_recognition_enabled', e.target.checked)}
-                className="w-5 h-5 rounded bg-surface-800 border-surface-600 text-primary-500 focus:ring-2 focus:ring-primary-500"
-              />
-            </label>
-
-            <label className="flex items-center justify-between p-3 rounded-lg bg-surface-900 border border-surface-600 cursor-pointer hover:border-primary-700 transition-colors">
-              <div>
-                <p className="text-sm font-medium text-white">Recording</p>
-                <p className="text-xs text-slate-500">Enable video recording</p>
-              </div>
-              <input
-                type="checkbox"
-                checked={formData.recording_enabled}
-                onChange={(e) => handleChange('recording_enabled', e.target.checked)}
-                className="w-5 h-5 rounded bg-surface-800 border-surface-600 text-primary-500 focus:ring-2 focus:ring-primary-500"
-              />
-            </label>
-          </div>
-        </form>
-
-        {}
-        <div className="flex items-center justify-end gap-3 p-6 border-t border-surface-600">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-6 py-2 rounded-lg bg-surface-700 hover:bg-surface-600 text-slate-300 hover:text-white font-medium transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={saving}
-            className="flex items-center gap-2 px-6 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 disabled:bg-primary-800 text-white font-medium transition-colors"
-          >
-            {saving && <Loader2 size={14} className="animate-spin" />}
-            {isEdit ? 'Save Changes' : 'Add Camera'}
-          </button>
-        </div>
-      </div>
-    </div>
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        <Button onClick={onClose} variant="outlined" color="inherit">Cancel</Button>
+        <Button type="submit" variant="contained" disabled={saving} startIcon={saving ? <CircularProgress size={14} /> : null}>
+          {isEdit ? 'Save Changes' : 'Add Camera'}
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }
+

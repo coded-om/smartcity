@@ -1,279 +1,156 @@
 import React, { useState, useEffect } from 'react';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Tabs from '@mui/material/Tabs';
+import Tab from '@mui/material/Tab';
+import Card from '@mui/material/Card';
+import CardContent from '@mui/material/CardContent';
+import CardHeader from '@mui/material/CardHeader';
+import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
+import TextField from '@mui/material/TextField';
+import InputAdornment from '@mui/material/InputAdornment';
+import Slider from '@mui/material/Slider';
+import Avatar from '@mui/material/Avatar';
+import Chip from '@mui/material/Chip';
+import Table from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableContainer from '@mui/material/TableContainer';
+import TableHead from '@mui/material/TableHead';
+import TableRow from '@mui/material/TableRow';
+import Paper from '@mui/material/Paper';
+import CircularProgress from '@mui/material/CircularProgress';
+import Divider from '@mui/material/Divider';
+import { useTheme } from '@mui/material/styles';
 import {
   Settings as SettingsIcon, Camera, Users, Bell, Plus, Edit2, Trash2,
   RefreshCw, Search, User,
 } from 'lucide-react';
 import { apiFetch, getPersonPhotoUrl } from '../apiBase';
-import { cn } from '../lib/utils';
 import Cameras from './Cameras';
 import PersonModal from './PersonModal';
 
-function TabButton({ active, onClick, icon: Icon, label }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-lg transition-all',
-        active
-          ? 'bg-primary-500/20 text-primary-300 border border-primary-500/30'
-          : 'text-slate-400 hover:text-white hover:bg-surface-700 border border-transparent'
-      )}
-    >
-      <Icon size={16} />
-      {label}
-    </button>
-  );
-}
-
 function PersonManagementTab() {
-  const [persons, setPersons] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [modalOpen, setModalOpen] = useState(false);
+  const [persons,       setPersons]       = useState([]);
+  const [loading,       setLoading]       = useState(true);
+  const [searchQuery,   setSearchQuery]   = useState('');
+  const [modalOpen,     setModalOpen]     = useState(false);
   const [editingPerson, setEditingPerson] = useState(null);
 
   const loadPersons = async () => {
     try {
-      const res = await apiFetch('/persons');
+      const res  = await apiFetch('/persons');
       const data = await res.json();
-      if (data.success) {
-        setPersons(data.data || []);
-      }
-    } catch (err) {
-      console.error('Failed to load persons:', err);
-    } finally {
-      setLoading(false);
-    }
+      if (data.success) setPersons(data.data || []);
+    } catch (err) { console.error('Failed to load persons:', err); }
+    finally { setLoading(false); }
   };
 
-  useEffect(() => {
-    loadPersons();
-  }, []);
+  useEffect(() => { loadPersons(); }, []);
 
-  const handleAdd = () => {
-    setEditingPerson(null);
-    setModalOpen(true);
-  };
-
-  const handleEdit = (person) => {
-    setEditingPerson(person);
-    setModalOpen(true);
-  };
-
+  const handleAdd    = () => { setEditingPerson(null); setModalOpen(true); };
+  const handleEdit   = (person) => { setEditingPerson(person); setModalOpen(true); };
+  const handleSave   = async () => { setModalOpen(false); await loadPersons(); };
   const handleDelete = async (person) => {
-    if (!window.confirm(`Delete person "${person.name}"? This will also remove their face encoding.`)) {
-      return;
-    }
-
+    if (!window.confirm(`Delete person "${person.name}"? This will also remove their face encoding.`)) return;
     try {
-      const res = await apiFetch(`/persons/${person.id}`, { method: 'DELETE' });
+      const res  = await apiFetch(`/persons/${person.id}`, { method: 'DELETE' });
       const data = await res.json();
-      if (data.success) {
-        await loadPersons();
-      } else {
-        alert(`Failed to delete person: ${data.error || 'Unknown error'}`);
-      }
-    } catch (err) {
-      console.error('Delete person error:', err);
-      alert('Failed to delete person');
-    }
-  };
-
-  const handleSave = async () => {
-    setModalOpen(false);
-    await loadPersons();
+      if (data.success) { await loadPersons(); }
+      else alert(`Failed to delete person: ${data.error || 'Unknown error'}`);
+    } catch (err) { console.error('Delete person error:', err); alert('Failed to delete person'); }
   };
 
   const filteredPersons = persons.filter(p => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
-    return (
-      p.name?.toLowerCase().includes(q) ||
-      p.employee_id?.toLowerCase().includes(q) ||
-      p.role?.toLowerCase().includes(q) ||
-      p.department?.toLowerCase().includes(q)
-    );
+    return p.name?.toLowerCase().includes(q) || p.employee_id?.toLowerCase().includes(q) || p.role?.toLowerCase().includes(q) || p.department?.toLowerCase().includes(q);
   });
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-        <RefreshCw size={18} className="animate-spin text-primary-400 mb-4" />
-        <p className="text-lg">Loading persons...</p>
-      </div>
-    );
-  }
+  if (loading) return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 10, gap: 2 }}>
+      <CircularProgress /><Typography color="text.secondary">Loading persons…</Typography>
+    </Box>
+  );
 
   return (
-    <div className="space-y-6">
-      {}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-3">
-            <Users size={20} className="text-primary-400" />
-            Person Management
-          </h2>
-          <p className="text-slate-500 text-sm mt-1">
-            {persons.length} registered person{persons.length !== 1 ? 's' : ''}
-          </p>
-        </div>
-
-        <button
-          onClick={handleAdd}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-white font-medium transition-colors"
-        >
-          <Plus size={16} />
-          Register Person
-        </button>
-      </div>
-
-      {}
-      <div className="relative">
-        <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search by name, employee ID, role, or department..."
-          className="w-full pl-12 pr-4 py-3 rounded-lg bg-surface-900 border border-surface-600 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500"
-        />
-      </div>
-
-      {}
+    <Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, flexWrap: 'wrap', gap: 2 }}>
+        <Box>
+          <Typography variant="h6" fontWeight={600} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><Users size={18} /> Person Management</Typography>
+          <Typography variant="body2" color="text.secondary">{persons.length} registered person{persons.length !== 1 ? 's' : ''}</Typography>
+        </Box>
+        <Button variant="contained" startIcon={<Plus size={15} />} onClick={handleAdd}>Register Person</Button>
+      </Box>
+      <TextField
+        fullWidth size="small" placeholder="Search by name, employee ID, role, or department…"
+        value={searchQuery} onChange={e => setSearchQuery(e.target.value)} sx={{ mb: 2 }}
+        InputProps={{ startAdornment: <InputAdornment position="start"><Search size={14} /></InputAdornment> }}
+      />
       {persons.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-          <User size={42} className="mb-4 text-slate-700" />
-          <p className="text-lg font-medium mb-2">No persons registered</p>
-          <p className="text-sm mb-6">Register employees for face recognition</p>
-          <button
-            onClick={handleAdd}
-            className="flex items-center gap-2 px-6 py-3 rounded-lg bg-primary-600 hover:bg-primary-500 text-white font-medium transition-colors"
-          >
-            <Plus size={16} />
-            Register Person
-          </button>
-        </div>
+        <Box sx={{ textAlign: 'center', py: 10 }}>
+          <User size={42} color="#ccc" style={{ margin: '0 auto 12px' }} />
+          <Typography variant="h6" color="text.secondary">No persons registered</Typography>
+          <Typography variant="body2" color="text.disabled" sx={{ mb: 2 }}>Register employees for face recognition</Typography>
+          <Button variant="contained" startIcon={<Plus size={15} />} onClick={handleAdd}>Register Person</Button>
+        </Box>
       ) : filteredPersons.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-          <Search size={42} className="mb-4 text-slate-700" />
-          <p className="text-lg font-medium">No matching persons found</p>
-        </div>
+        <Box sx={{ textAlign: 'center', py: 10 }}><Typography variant="body1" color="text.disabled">No matching persons found</Typography></Box>
       ) : (
-        
-        <div className="bg-surface-800 rounded-xl border border-surface-600 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-surface-900 border-b border-surface-700">
-                <tr className="text-left">
-                  <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Photo</th>
-                  <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Name</th>
-                  <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Employee ID</th>
-                  <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Role</th>
-                  <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Department</th>
-                  <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase">Status</th>
-                  <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredPersons.map((person) => (
-                  <tr key={person.id} className="border-b border-surface-700 hover:bg-surface-800/50 transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="w-12 h-12 rounded-lg bg-surface-900 border border-surface-600 overflow-hidden flex items-center justify-center">
-                        {person.photo_path ? (
-                          <img
-                            src={getPersonPhotoUrl(person.id)}
-                            alt={person.name}
-                            className="w-full h-full object-cover"
-                            onError={(e) => {
-                              e.target.style.display = 'none';
-                              e.target.parentElement.innerHTML = '<div class="text-slate-600 text-xs"><svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/></svg></div>';
-                            }}
-                          />
-                        ) : (
-                          <User size={22} className="text-slate-600" />
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <p className="font-medium text-sm text-white">{person.name}</p>
-                    </td>
-                    <td className="py-3 px-4 text-sm text-slate-400">
-                      <code className="px-2 py-1 rounded bg-surface-900 border border-surface-600 text-xs">
-                        {person.employee_id}
-                      </code>
-                    </td>
-                    <td className="py-3 px-4 text-sm text-slate-400">
-                      {person.role || '—'}
-                    </td>
-                    <td className="py-3 px-4 text-sm text-slate-400">
-                      {person.department || '—'}
-                    </td>
-                    <td className="py-3 px-4">
-                      {person.authorized ? (
-                        <span className="px-2 py-1 rounded text-xs font-bold bg-emerald-900/20 text-emerald-300 border border-emerald-700/30">
-                          Authorized
-                        </span>
-                      ) : (
-                        <span className="px-2 py-1 rounded text-xs font-bold bg-accent-900/20 text-accent-300 border border-accent-700/30">
-                          Unauthorized
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex gap-2 justify-end">
-                        <button
-                          onClick={() => handleEdit(person)}
-                          className="p-2 rounded-lg bg-surface-700 hover:bg-surface-600 text-slate-300 hover:text-white transition-colors"
-                          title="Edit"
-                        >
-                          <Edit2 size={14} />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(person)}
-                          className="p-2 rounded-lg bg-accent-900/20 hover:bg-accent-900/40 text-accent-400 hover:text-accent-300 transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                {['Photo', 'Name', 'Employee ID', 'Role', 'Department', 'Status', ''].map(h => (
+                  <TableCell key={h}><Typography variant="caption" fontWeight={600} color="text.secondary" sx={{ textTransform: 'uppercase', fontSize: '0.65rem' }}>{h}</Typography></TableCell>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredPersons.map(person => (
+                <TableRow key={person.id} hover>
+                  <TableCell>
+                    <Avatar src={person.photo_path ? getPersonPhotoUrl(person.id) : undefined} sx={{ width: 40, height: 40, borderRadius: 1 }}>
+                      <User size={18} />
+                    </Avatar>
+                  </TableCell>
+                  <TableCell><Typography variant="body2" fontWeight={600}>{person.name}</Typography></TableCell>
+                  <TableCell><Typography variant="caption" fontFamily="monospace" sx={{ bgcolor: 'action.hover', px: 0.75, py: 0.25, borderRadius: 1 }}>{person.employee_id}</Typography></TableCell>
+                  <TableCell><Typography variant="body2" color="text.secondary">{person.role || '—'}</Typography></TableCell>
+                  <TableCell><Typography variant="body2" color="text.secondary">{person.department || '—'}</Typography></TableCell>
+                  <TableCell><Chip label={person.authorized ? 'Authorized' : 'Unauthorized'} color={person.authorized ? 'success' : 'error'} size="small" variant="outlined" sx={{ fontSize: '0.65rem' }} /></TableCell>
+                  <TableCell align="right">
+                    <IconButton size="small" onClick={() => handleEdit(person)}><Edit2 size={14} /></IconButton>
+                    <IconButton size="small" color="error" onClick={() => handleDelete(person)}><Trash2 size={14} /></IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
-
-      {}
-      {modalOpen && (
-        <PersonModal
-          person={editingPerson}
-          onClose={() => setModalOpen(false)}
-          onSave={handleSave}
-        />
-      )}
-    </div>
+      {modalOpen && <PersonModal person={editingPerson} onClose={() => setModalOpen(false)} onSave={handleSave} />}
+    </Box>
   );
 }
 
-function AlertThresholdsTab() {
-  const [thresholds, setThresholds] = useState({
-    temperature: 35,
-    gas: 2100,
-    humidity: 70,
-    noise: 80,
-    motion_sensitivity: 50,
-  });
+const THRESHOLD_FIELDS = [
+  { key: 'temperature',         label: 'Temperature',           desc: 'Alert when temperature exceeds this value',     min: 25,   max: 50,   step: 1,   unit: '°C',  color: 'error'   },
+  { key: 'gas',                 label: 'Gas Level',             desc: 'Alert when gas level exceeds this value',        min: 1000, max: 5000, step: 100, unit: ' ppm', color: 'warning' },
+  { key: 'humidity',            label: 'Humidity',              desc: 'Alert when humidity exceeds this value',         min: 40,   max: 90,   step: 1,   unit: '%',    color: 'info'    },
+  { key: 'noise',               label: 'Noise',                 desc: 'Alert when noise level exceeds this value',      min: 50,   max: 120,  step: 1,   unit: ' dB',  color: 'secondary' },
+  { key: 'motion_sensitivity',  label: 'Motion Sensitivity',    desc: 'Adjust motion sensor sensitivity',               min: 0,    max: 100,  step: 1,   unit: '%',    color: 'success' },
+];
 
-  const [saving, setSaving] = useState(false);
+function AlertThresholdsTab() {
+  const theme = useTheme();
+  const [thresholds, setThresholds] = useState({ temperature: 35, gas: 2100, humidity: 70, noise: 80, motion_sensitivity: 50 });
+  const [saving,    setSaving]    = useState(false);
   const [lastSaved, setLastSaved] = useState(null);
 
-  const handleChange = (field, value) => {
-    setThresholds(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleSave = async () => {
+  const handleChange = (field, value) => setThresholds(prev => ({ ...prev, [field]: value }));
+  const handleSave   = async () => {
     setSaving(true);
     await new Promise(resolve => setTimeout(resolve, 1000));
     setLastSaved(new Date());
@@ -281,214 +158,61 @@ function AlertThresholdsTab() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h2 className="text-xl font-bold text-white flex items-center gap-3">
-          <Bell size={20} className="text-primary-400" />
-          Alert Thresholds
-        </h2>
-        <p className="text-slate-500 text-sm mt-1">
-          Configure sensor thresholds for triggering alerts
-        </p>
-      </div>
-
-      <div className="space-y-6">
-        {}
-        <div className="p-6 bg-surface-800 rounded-xl border border-surface-600">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-white font-semibold">Temperature Threshold</h3>
-              <p className="text-slate-500 text-sm">Alert when temperature exceeds this value</p>
-            </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold text-coral-400">{thresholds.temperature}°C</p>
-            </div>
-          </div>
-          <input
-            type="range"
-            min="25"
-            max="50"
-            value={thresholds.temperature}
-            onChange={(e) => handleChange('temperature', parseInt(e.target.value))}
-            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-coral-500"
-          />
-          <div className="flex justify-between text-xs text-slate-600 mt-2">
-            <span>25°C</span>
-            <span>50°C</span>
-          </div>
-        </div>
-
-        {}
-        <div className="p-6 bg-surface-800 rounded-xl border border-surface-600">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-white font-semibold">Gas Level Threshold</h3>
-              <p className="text-slate-500 text-sm">Alert when gas level exceeds this value</p>
-            </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold text-bronze-400">{thresholds.gas} ppm</p>
-            </div>
-          </div>
-          <input
-            type="range"
-            min="1000"
-            max="5000"
-            step="100"
-            value={thresholds.gas}
-            onChange={(e) => handleChange('gas', parseInt(e.target.value))}
-            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-bronze-500"
-          />
-          <div className="flex justify-between text-xs text-slate-600 mt-2">
-            <span>1000 ppm</span>
-            <span>5000 ppm</span>
-          </div>
-        </div>
-
-        {}
-        <div className="p-6 bg-surface-800 rounded-xl border border-surface-600">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-white font-semibold">Humidity Threshold</h3>
-              <p className="text-slate-500 text-sm">Alert when humidity exceeds this value</p>
-            </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold text-primary-300">{thresholds.humidity}%</p>
-            </div>
-          </div>
-          <input
-            type="range"
-            min="40"
-            max="90"
-            value={thresholds.humidity}
-            onChange={(e) => handleChange('humidity', parseInt(e.target.value))}
-            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
-          />
-          <div className="flex justify-between text-xs text-slate-600 mt-2">
-            <span>40%</span>
-            <span>90%</span>
-          </div>
-        </div>
-
-        {}
-        <div className="p-6 bg-surface-800 rounded-xl border border-surface-600">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-white font-semibold">Noise Threshold</h3>
-              <p className="text-slate-500 text-sm">Alert when noise level exceeds this value</p>
-            </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold text-secondary-300">{thresholds.noise} dB</p>
-            </div>
-          </div>
-          <input
-            type="range"
-            min="50"
-            max="120"
-            value={thresholds.noise}
-            onChange={(e) => handleChange('noise', parseInt(e.target.value))}
-            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-secondary-500"
-          />
-          <div className="flex justify-between text-xs text-slate-600 mt-2">
-            <span>50 dB</span>
-            <span>120 dB</span>
-          </div>
-        </div>
-
-        {}
-        <div className="p-6 bg-surface-800 rounded-xl border border-surface-600">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-white font-semibold">Motion Detection Sensitivity</h3>
-              <p className="text-slate-500 text-sm">Adjust motion sensor sensitivity</p>
-            </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold text-emerald-400">
-                {thresholds.motion_sensitivity}%
-              </p>
-            </div>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={thresholds.motion_sensitivity}
-            onChange={(e) => handleChange('motion_sensitivity', parseInt(e.target.value))}
-            className="w-full h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-          />
-          <div className="flex justify-between text-xs text-slate-600 mt-2">
-            <span>Low</span>
-            <span>Medium</span>
-            <span>High</span>
-          </div>
-        </div>
-      </div>
-
-      {}
-      <div className="flex items-center justify-between p-4 bg-surface-900 rounded-lg border border-surface-600">
-        {lastSaved && (
-          <p className="text-sm text-slate-500">
-            Last saved: {lastSaved.toLocaleTimeString()}
-          </p>
-        )}
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="ml-auto flex items-center gap-2 px-6 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 disabled:bg-primary-800 text-white font-medium transition-colors"
-        >
-          {saving && <RefreshCw size={14} className="animate-spin" />}
-          Save Thresholds
-        </button>
-      </div>
-    </div>
+    <Box sx={{ maxWidth: 700 }}>
+      <Typography variant="h6" fontWeight={600} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}><Bell size={18} /> Alert Thresholds</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Configure sensor thresholds for triggering alerts</Typography>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {THRESHOLD_FIELDS.map(f => (
+          <Card key={f.key}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+                <Box>
+                  <Typography variant="subtitle2" fontWeight={600}>{f.label}</Typography>
+                  <Typography variant="caption" color="text.secondary">{f.desc}</Typography>
+                </Box>
+                <Typography variant="h5" fontWeight={700} color={`${f.color}.main`}>{thresholds[f.key]}{f.unit}</Typography>
+              </Box>
+              <Slider
+                value={thresholds[f.key]} min={f.min} max={f.max} step={f.step}
+                onChange={(_, v) => handleChange(f.key, v)}
+                color={f.color}
+                valueLabelDisplay="auto"
+                marks={[{ value: f.min, label: `${f.min}${f.unit}` }, { value: f.max, label: `${f.max}${f.unit}` }]}
+              />
+            </CardContent>
+          </Card>
+        ))}
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 3, p: 2, borderRadius: 2, bgcolor: 'action.hover' }}>
+        {lastSaved
+          ? <Typography variant="body2" color="text.secondary">Last saved: {lastSaved.toLocaleTimeString()}</Typography>
+          : <Box />
+        }
+        <Button variant="contained" disabled={saving} startIcon={saving ? <RefreshCw size={14} className="animate-spin" /> : null} onClick={handleSave}>Save Thresholds</Button>
+      </Box>
+    </Box>
   );
 }
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState('cameras');
+  const [activeTab, setActiveTab] = useState(0);
+  const TABS = [{ label: 'Cameras', icon: <Camera size={16} /> }, { label: 'Persons', icon: <Users size={16} /> }, { label: 'Thresholds', icon: <Bell size={16} /> }];
 
   return (
-    <div className="space-y-6 p-6">
-      {}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-            <SettingsIcon size={22} className="text-primary-400" />
-            Settings
-          </h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Configure system settings and parameters
-          </p>
-        </div>
-      </div>
-
-      {}
-      <div className="flex gap-2 overflow-x-auto pb-2">
-        <TabButton
-          active={activeTab === 'cameras'}
-          onClick={() => setActiveTab('cameras')}
-          icon={Camera}
-          label="Cameras"
-        />
-        <TabButton
-          active={activeTab === 'persons'}
-          onClick={() => setActiveTab('persons')}
-          icon={Users}
-          label="Person Management"
-        />
-        <TabButton
-          active={activeTab === 'thresholds'}
-          onClick={() => setActiveTab('thresholds')}
-          icon={Bell}
-          label="Alert Thresholds"
-        />
-      </div>
-
-      {}
-      <div className="mt-6">
-        {activeTab === 'cameras' && <Cameras />}
-        {activeTab === 'persons' && <PersonManagementTab />}
-        {activeTab === 'thresholds' && <AlertThresholdsTab />}
-      </div>
-    </div>
+    <Box sx={{ animation: 'fadeIn 0.3s ease-out' }}>
+      <Typography variant="h5" fontWeight={700} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.5 }}><SettingsIcon size={22} /> Settings</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Configure system settings and parameters</Typography>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+        <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
+          {TABS.map((t, i) => (
+            <Tab key={i} label={t.label} icon={t.icon} iconPosition="start" sx={{ minHeight: 48 }} />
+          ))}
+        </Tabs>
+      </Box>
+      {activeTab === 0 && <Cameras />}
+      {activeTab === 1 && <PersonManagementTab />}
+      {activeTab === 2 && <AlertThresholdsTab />}
+    </Box>
   );
 }
+

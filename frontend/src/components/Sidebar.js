@@ -1,213 +1,250 @@
-import React, { useState } from 'react';
+import React from 'react';
+import Box from '@mui/material/Box';
+import Drawer from '@mui/material/Drawer';
+import List from '@mui/material/List';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
+import Tooltip from '@mui/material/Tooltip';
+import Typography from '@mui/material/Typography';
+import Divider from '@mui/material/Divider';
+import Chip from '@mui/material/Chip';
+import Avatar from '@mui/material/Avatar';
+import { alpha } from '@mui/material/styles';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import {
   LayoutDashboard, Radio, Camera, Map, Cpu, FileText,
-  Printer, Settings, Shield, ChevronLeft, ChevronRight, X,
+  Printer, Settings, Shield,
 } from 'lucide-react';
-import { cn } from '../lib/utils';
-import { Separator } from './ui/separator';
-import { Sheet, SheetContent } from './ui/sheet';
 
 const NAV_GROUPS = [
   {
     label: 'Monitoring',
     items: [
-      { id: 'overview',      icon: LayoutDashboard, label: 'Overview'      },
-      { id: 'live-monitor',  icon: Radio,           label: 'Live Monitor'  },
-      { id: 'cameras',       icon: Camera,          label: 'Cameras'       },
-      { id: 'security-map',  icon: Map,             label: 'Security Map'  },
+      { id: 'overview',      Icon: LayoutDashboard, label: 'Overview' },
+      { id: 'live-monitor',  Icon: Radio,           label: 'Monitor'  },
+      { id: 'cameras',       Icon: Camera,          label: 'Cameras'  },
+      { id: 'security-map',  Icon: Map,             label: 'Map'      },
     ],
   },
   {
     label: 'Analysis',
     items: [
-      { id: 'ai-analysis',   icon: Cpu,      label: 'AI Analysis'   },
-      { id: 'forensic-logs', icon: FileText, label: 'Forensic Logs' },
+      { id: 'ai-analysis',   Icon: Cpu,      label: 'AI Analysis' },
+      { id: 'forensic-logs', Icon: FileText, label: 'Forensics'   },
     ],
   },
   {
     label: 'Reports',
-    items: [
-      { id: 'report-center', icon: Printer, label: 'Report Center' },
-    ],
+    items: [{ id: 'report-center', Icon: Printer, label: 'Reports' }],
   },
   {
     label: 'System',
-    items: [
-      { id: 'settings', icon: Settings, label: 'Settings' },
-    ],
+    items: [{ id: 'settings', Icon: Settings, label: 'Settings' }],
   },
 ];
 
-function NavItem({ item, active, onClick, collapsed }) {
-  const Icon = item.icon;
+// ─── Rail item (80px desktop) ────────────────────────────────────────────────
+function RailItem({ item, active, onClick }) {
+  const theme = useTheme();
+  const { Icon } = item;
   return (
-    <button
-      onClick={onClick}
-      title={collapsed ? item.label : undefined}
-      className={cn(
-        'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 border',
-        active
-          ? 'bg-primary-500/25 text-primary-200 border-primary-500/40 shadow-glow-primary'
-          : 'text-slate-400 hover:bg-surface-600 hover:text-slate-200 border-transparent',
-        collapsed && 'justify-center px-0',
-      )}
-    >
-      <Icon size={16} className="shrink-0" />
-      {!collapsed && <span className="truncate leading-none">{item.label}</span>}
-      {active && !collapsed && (
-        <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-400 shrink-0" />
-      )}
-    </button>
+    <Tooltip title={item.label} placement="right" arrow>
+      <Box
+        onClick={onClick}
+        sx={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          gap: 0.5, cursor: 'pointer', py: 0.75, width: '100%', userSelect: 'none',
+        }}
+      >
+        <Box
+          sx={{
+            width: 56, height: 32, borderRadius: '16px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            bgcolor: active ? alpha(theme.palette.primary.main, 0.16) : 'transparent',
+            color:   active ? 'primary.main' : 'text.secondary',
+            transition: 'background-color 0.2s, color 0.2s',
+            '&:hover': {
+              bgcolor: active
+                ? alpha(theme.palette.primary.main, 0.24)
+                : alpha(theme.palette.text.primary, 0.08),
+            },
+          }}
+        >
+          <Icon size={22} strokeWidth={active ? 2.2 : 1.8} />
+        </Box>
+        <Typography variant="caption" sx={{
+          fontSize: '0.625rem', fontWeight: active ? 600 : 400,
+          color: active ? 'primary.main' : 'text.secondary',
+          lineHeight: 1.2, textAlign: 'center',
+        }}>
+          {item.label}
+        </Typography>
+      </Box>
+    </Tooltip>
   );
 }
 
-function DeviceRow({ device }) {
-  const online = device.online ?? device.status === 'online';
+// ─── Drawer item (280px mobile) ───────────────────────────────────────────────
+function DrawerItem({ item, active, onClick }) {
+  const { Icon } = item;
   return (
-    <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-surface-600 transition-colors group">
-      <span className={cn(
-        'w-2 h-2 rounded-full shrink-0',
-        online ? 'bg-emerald-400 shadow-[0_0_5px_rgba(52,211,153,0.7)]' : 'bg-accent-500',
-      )} />
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-slate-300 truncate group-hover:text-white transition-colors">{device.device_id}</p>
-        <p className="text-[10px] text-slate-600 truncate">{device.location || 'Unknown'}</p>
-      </div>
-    </div>
+    <ListItemButton selected={active} onClick={onClick} sx={{ mb: 0.5 }}>
+      <ListItemIcon sx={{ minWidth: 36, color: active ? 'primary.main' : 'text.secondary' }}>
+        <Icon size={20} strokeWidth={active ? 2.2 : 1.8} />
+      </ListItemIcon>
+      <ListItemText
+        primary={item.label}
+        primaryTypographyProps={{ variant: 'body2', fontWeight: active ? 600 : 400, color: active ? 'primary.main' : 'text.primary' }}
+      />
+      {active && <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: 'primary.main', ml: 1 }} />}
+    </ListItemButton>
   );
 }
 
-function SidebarInner({ activeView, setActiveView, stats, devices, collapsed, setCollapsed, onClose }) {
+// ─── Rail content ─────────────────────────────────────────────────────────────
+function RailContent({ activeView, onNavigate, stats }) {
   const openAlerts    = stats?.open_alerts    || 0;
   const onlineDevices = stats?.devices_online || 0;
   const totalDevices  = stats?.devices_total  || 0;
-
   return (
-    <div className="flex flex-col h-full bg-surface-900">
-      {}
-      <div className={cn(
-        'flex items-center gap-3 px-4 py-4 border-b border-surface-700',
-        collapsed && 'justify-center px-2',
-      )}>
-        <div className="shrink-0 flex items-center justify-center w-8 h-8 rounded-lg bg-primary-500/20 border border-primary-500/30">
-          <Shield size={16} className="text-primary-300" />
-        </div>
-        {!collapsed && (
-          <div className="flex-1 min-w-0">
-            <h1 className="text-white font-bold text-sm leading-tight truncate">SmartCity</h1>
-            <p className="text-slate-500 text-[11px] leading-tight">IoT Security Platform</p>
-          </div>
-        )}
-        {onClose && (
-          <button onClick={onClose} className="lg:hidden ml-auto p-1 rounded-md text-slate-500 hover:text-white hover:bg-surface-700 transition-colors">
-            <X size={14} />
-          </button>
-        )}
-      </div>
-
-      {}
-      {!collapsed && (
-        <div className="px-3 pt-3 pb-1 flex gap-2">
-          <div className={cn(
-            'flex-1 rounded-lg p-2 text-center border',
-            openAlerts > 0 ? 'bg-accent-500/10 border-accent-500/30' : 'bg-surface-700 border-surface-600',
-          )}>
-            <p className={cn('text-base font-bold tabular-nums', openAlerts > 0 ? 'text-accent-300' : 'text-emerald-400')}>
-              {openAlerts}
-            </p>
-            <p className="text-[9px] text-slate-500 uppercase tracking-wide">Alerts</p>
-          </div>
-          <div className="flex-1 bg-surface-700 border border-surface-600 rounded-lg p-2 text-center">
-            <p className="text-base font-bold tabular-nums text-primary-300">{onlineDevices}/{totalDevices}</p>
-            <p className="text-[9px] text-slate-500 uppercase tracking-wide">Online</p>
-          </div>
-        </div>
+    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', py: 1.5 }}>
+      <Box sx={{ mb: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5 }}>
+        <Box sx={{ width: 40, height: 40, borderRadius: '12px', bgcolor: 'primary.main', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Shield size={20} color="#fff" />
+        </Box>
+      </Box>
+      {openAlerts > 0 && (
+        <Chip label={openAlerts} color="error" size="small" sx={{ mb: 1, height: 20, fontSize: '0.625rem', fontWeight: 700 }} />
       )}
-
-      {}
-      <nav className="flex-1 px-2 py-3 space-y-3 overflow-y-auto">
+      <Typography variant="caption" sx={{ fontSize: '0.6rem', color: 'text.disabled', mb: 2 }}>
+        {onlineDevices}/{totalDevices}
+      </Typography>
+      <Divider sx={{ width: 40, mb: 1.5 }} />
+      <Box sx={{ flex: 1, overflow: 'hidden auto', width: '100%', px: 0.5 }}>
         {NAV_GROUPS.map((group, gi) => (
-          <div key={group.label}>
-            {gi > 0 && !collapsed && <Separator className="mb-3" />}
-            {!collapsed && (
-              <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest px-3 mb-1.5">
-                {group.label}
-              </p>
-            )}
-            <div className="space-y-0.5">
-              {group.items.map(item => (
-                <NavItem
-                  key={item.id}
-                  item={item}
-                  active={activeView === item.id}
-                  onClick={() => { setActiveView(item.id); onClose?.(); }}
-                  collapsed={collapsed}
-                />
-              ))}
-            </div>
-          </div>
+          <React.Fragment key={group.label}>
+            {gi > 0 && <Divider sx={{ width: 40, mx: 'auto', my: 1 }} />}
+            {group.items.map(item => (
+              <RailItem key={item.id} item={item} active={activeView === item.id} onClick={() => onNavigate(item.id)} />
+            ))}
+          </React.Fragment>
         ))}
-      </nav>
-
-      {}
-      {!collapsed && devices && devices.length > 0 && (
-        <div className="border-t border-surface-700 px-3 pt-3 pb-2">
-          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest px-1 mb-2">IoT Devices</p>
-          <div className="space-y-0.5 max-h-32 overflow-y-auto">
-            {devices.map(d => <DeviceRow key={d.device_id} device={d} />)}
-          </div>
-        </div>
-      )}
-
-      {}
-      <button
-        onClick={() => setCollapsed(c => !c)}
-        className="hidden lg:flex items-center justify-center p-3 border-t border-surface-700 text-slate-500 hover:text-white hover:bg-surface-700 transition-colors"
-        title={collapsed ? 'Expand' : 'Collapse'}
-      >
-        {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-      </button>
-    </div>
+      </Box>
+    </Box>
   );
 }
 
-function Sidebar({ activeView, setActiveView, stats, devices, isOpen, onClose }) {
-  const [collapsed, setCollapsed] = useState(false);
+// ─── Drawer content ───────────────────────────────────────────────────────────
+function DrawerContent({ activeView, onNavigate, stats, devices, onClose }) {
+  const openAlerts    = stats?.open_alerts    || 0;
+  const onlineDevices = stats?.devices_online || 0;
+  const totalDevices  = stats?.devices_total  || 0;
+  return (
+    <Box sx={{ width: 280, height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <Box sx={{ px: 3, py: 2.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        <Avatar sx={{ width: 40, height: 40, bgcolor: 'primary.main', borderRadius: '12px' }} variant="rounded">
+          <Shield size={20} />
+        </Avatar>
+        <Box>
+          <Typography variant="subtitle2" fontWeight={700}>SmartCity</Typography>
+          <Typography variant="caption" color="text.secondary">IoT Security Platform</Typography>
+        </Box>
+      </Box>
+      <Box sx={{ px: 2, pb: 1, display: 'flex', gap: 1 }}>
+        <Box sx={{ flex: 1, p: 1.5, borderRadius: 2, bgcolor: openAlerts > 0 ? 'error.main' : 'action.hover', textAlign: 'center' }}>
+          <Typography variant="subtitle2" fontWeight={700} color={openAlerts > 0 ? '#fff' : 'success.main'}>{openAlerts}</Typography>
+          <Typography variant="caption" color={openAlerts > 0 ? 'rgba(255,255,255,.8)' : 'text.secondary'} sx={{ fontSize: '0.625rem' }}>Alerts</Typography>
+        </Box>
+        <Box sx={{ flex: 1, p: 1.5, borderRadius: 2, bgcolor: 'action.hover', textAlign: 'center' }}>
+          <Typography variant="subtitle2" fontWeight={700} color="primary.main">{onlineDevices}/{totalDevices}</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.625rem' }}>Online</Typography>
+        </Box>
+      </Box>
+      <Divider sx={{ mx: 2, mb: 1 }} />
+      <Box sx={{ flex: 1, overflow: 'hidden auto', px: 1 }}>
+        {NAV_GROUPS.map((group, gi) => (
+          <React.Fragment key={group.label}>
+            {gi > 0 && <Divider sx={{ my: 1, mx: 1 }} />}
+            <Typography variant="overline" sx={{ px: 2, mb: 0.5, display: 'block', color: 'text.disabled', fontSize: '0.6rem', letterSpacing: '0.08rem' }}>
+              {group.label}
+            </Typography>
+            <List dense disablePadding>
+              {group.items.map(item => (
+                <DrawerItem key={item.id} item={item} active={activeView === item.id} onClick={() => { onNavigate(item.id); onClose(); }} />
+              ))}
+            </List>
+          </React.Fragment>
+        ))}
+      </Box>
+      {devices && devices.length > 0 && (
+        <>
+          <Divider sx={{ mx: 2, mb: 1 }} />
+          <Box sx={{ px: 2, pb: 2 }}>
+            <Typography variant="overline" sx={{ color: 'text.disabled', fontSize: '0.6rem', letterSpacing: '0.08rem' }}>IoT Devices</Typography>
+            <Box sx={{ mt: 0.5, maxHeight: 100, overflow: 'hidden auto' }}>
+              {devices.slice(0, 10).map(d => {
+                const online = d.online ?? d.status === 'online';
+                return (
+                  <Box key={d.device_id} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 0.75, px: 1, borderRadius: 1 }}>
+                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: online ? 'success.main' : 'error.main', flexShrink: 0 }} />
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="caption" noWrap fontWeight={500}>{d.device_id}</Typography>
+                      <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block', fontSize: '0.6rem' }}>{d.location || 'Unknown'}</Typography>
+                    </Box>
+                  </Box>
+                );
+              })}
+            </Box>
+          </Box>
+        </>
+      )}
+    </Box>
+  );
+}
+
+// ─── Main Sidebar ─────────────────────────────────────────────────────────────
+function Sidebar({ activeView, setActiveView, stats, devices, mobileOpen, onClose, railWidth, appBarHeight }) {
+  const theme    = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+
+  if (isMobile) {
+    return (
+      <Drawer
+        variant="temporary"
+        open={mobileOpen}
+        onClose={onClose}
+        ModalProps={{ keepMounted: true }}
+        sx={{
+          '& .MuiDrawer-paper': {
+            width: 280, boxSizing: 'border-box',
+            top: `${appBarHeight}px`, height: `calc(100vh - ${appBarHeight}px)`,
+          },
+        }}
+      >
+        <DrawerContent activeView={activeView} onNavigate={setActiveView} stats={stats} devices={devices} onClose={onClose} />
+      </Drawer>
+    );
+  }
 
   return (
-    <>
-      {}
-      <Sheet open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-        <SheetContent side="left" className="p-0 w-64 border-surface-700">
-          <SidebarInner
-            activeView={activeView}
-            setActiveView={setActiveView}
-            stats={stats}
-            devices={devices}
-            collapsed={false}
-            setCollapsed={() => {}}
-            onClose={onClose}
-          />
-        </SheetContent>
-      </Sheet>
-
-      {}
-      <aside className={cn(
-        'hidden lg:flex flex-col shrink-0 border-r border-surface-700 transition-all duration-300',
-        collapsed ? 'w-16' : 'w-64',
-      )}>
-        <SidebarInner
-          activeView={activeView}
-          setActiveView={setActiveView}
-          stats={stats}
-          devices={devices}
-          collapsed={collapsed}
-          setCollapsed={setCollapsed}
-          onClose={null}
-        />
-      </aside>
-    </>
+    <Drawer
+      variant="permanent"
+      sx={{
+        width: railWidth, flexShrink: 0,
+        '& .MuiDrawer-paper': {
+          width: railWidth, boxSizing: 'border-box',
+          top: `${appBarHeight}px`, height: `calc(100vh - ${appBarHeight}px)`,
+          overflow: 'hidden', border: 'none',
+          borderRight: `1px solid ${theme.palette.divider}`,
+        },
+      }}
+    >
+      <RailContent activeView={activeView} onNavigate={setActiveView} stats={stats} />
+    </Drawer>
   );
 }
 
 export default Sidebar;
+
