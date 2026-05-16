@@ -1,3 +1,6 @@
+from gevent import monkey
+monkey.patch_all()
+
 import os
 import socket
 import sys
@@ -94,10 +97,12 @@ db.init_db()
 
 # Fail fast if port is already in use (avoids misleading DB-lock errors)
 _port = int(os.environ.get('PORT', 5000))
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
-    if _s.connect_ex(('127.0.0.1', _port)) == 0:
-        print(f"[ERROR] Port {_port} is already in use. Run: fuser -k {_port}/tcp")
-        sys.exit(1)
+_is_gunicorn = os.environ.get('SERVER_SOFTWARE', '').lower().startswith('gunicorn')
+if not _is_gunicorn:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+        if _s.connect_ex(('127.0.0.1', _port)) == 0:
+            print(f"[ERROR] Port {_port} is already in use. Run: fuser -k {_port}/tcp")
+            sys.exit(1)
 
 _seed_device_locations()
 threading.Thread(target=_auto_train_all,                     daemon=True).start()

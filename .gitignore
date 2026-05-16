@@ -47,8 +47,13 @@ backend/sensors.db
 backend/models/*.pkl
 backend/recordings/*.mp4
 backend/data/detections/
+backend/data/detections/cam_4/
+backend/data/detections/cam_99/
+backend/data/persons/photos/
 backend/data/persons/encodings/
 *.db-journal
+*.db-wal
+*.db-shm
 
 # Reports / docs
 *.docx
